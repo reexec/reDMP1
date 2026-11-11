@@ -5,6 +5,7 @@
 | 문서 | 내용 |
 |---|---|
 | [disc-image.md](disc-image.md) | ULKS-46050 원본 UMD의 신원(redump)과 구성 |
+| [executable.md](executable.md) | 원본 실행 파일(`BOOT.BIN`/`EBOOT.BIN`) 분석, 세그먼트, NID, 함수 커버리지 |
 
 ---
 
@@ -15,3 +16,4 @@ Findings from the original disc and executable, by topic, marked **confirmed**, 
 | Document | Contents |
 |---|---|
 | [disc-image.md](disc-image.md) | Identity (redump) and layout of the original ULKS-46050 UMD |
+| [executable.md](executable.md) | Analysis of original executables (`BOOT.BIN`/`EBOOT.BIN`), segments, NIDs, function coverage |

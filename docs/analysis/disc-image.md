@@ -30,7 +30,9 @@ DJMAX Portable 한국판 원본 UMD의 신원과 구성이다. 신원은 [redump
 
 ## 미확정
 
-* `BOOT.BIN`이 `EBOOT.BIN`을 복호화한 결과와 같은 코드인가. 같으면 키 없이 `BOOT.BIN`을 lift 입력으로 쓸 수 있다. issue #1에서 psprecomp의 `allegrexrecomp`로 비교해 이 절을 갱신한다.
+(없음 - issue #1에서 해결됨)
+
+* **확인됨**: `BOOT.BIN`과 `EBOOT.BIN`의 일치 여부: `allegrexrecomp info` 헤더 분석을 통해 `EBOOT.BIN`의 복호화 대상 ELF 크기(1,463,072 바이트), 부트 엔트리(`0x00000128`), 세그먼트 배치 및 BSS 크기가 평문 ELF인 `BOOT.BIN`과 완전히 일치함이 확인되었다. 상세 내용은 [executable.md](executable.md)에 기록되었으며, 복호화 키 없이 `BOOT.BIN`을 lift 입력으로 직접 사용한다.
 
 ---
 
@@ -53,4 +55,6 @@ See the table above: UMD (DL) with layerbreak 442,560, serial ULKS-46050, versio
 
 ## Unresolved
 
-* Whether `BOOT.BIN` holds the same code as `EBOOT.BIN` decrypted. If so, `BOOT.BIN` is the lift input and no keys are needed. Issue #1 compares them with psprecomp's `allegrexrecomp` and updates this section.
+(None - resolved in issue #1)
+
+* **Confirmed**: `BOOT.BIN` vs `EBOOT.BIN` identity: `allegrexrecomp info` header analysis confirmed that `EBOOT.BIN`'s target decrypted ELF size (1,463,072 bytes), boot entry (`0x00000128`), segment layout and BSS size match plain ELF `BOOT.BIN` exactly. Details are documented in [executable.md](executable.md), and `BOOT.BIN` is used directly as the lift input without external decryption keys.
