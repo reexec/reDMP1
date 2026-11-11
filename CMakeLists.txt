@@ -17,7 +17,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # 1. repsp integration (shared runtime)
 set(REDMP1_REPSP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/repsp" CACHE PATH "Path to repsp directory")
-set(REPSP_BUILD_PROBES ON CACHE BOOL "Build repsp verification probes" FORCE)
+set(REPSP_BUILD_PROBES ON CACHE BOOL "Build repsp verification probes")
 
 add_subdirectory("${REDMP1_REPSP_DIR}" repsp)
 
