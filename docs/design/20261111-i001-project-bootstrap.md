@@ -108,7 +108,7 @@ reDMP1/
 ```
 
 * `third_party/psprecomp`는 upstream `main`의 머지 커밋 `5ca18fa`(v0.5.0 이후 12커밋: VFPU 누락 명령, 지연 슬롯, 모듈 로더)에 고정한다. 다음 태그가 나오면 태그로 옮긴다. 고정을 옮기면 `src/recomp_abi/`를 같은 작업에서 맞춘다.
-* `third_party/repsp`는 repsp issue #1의 작업 브랜치 커밋에 임시로 고정하고, repsp가 머지되면 머지 커밋으로 옮긴다.
+* `third_party/repsp`는 repsp v0.0.1의 머지 커밋 `730c404`에 고정한다.
 
 ## 8. 이번 task의 검증
 
@@ -165,7 +165,7 @@ See the table above. Key points: the PSP scheduler is single-core, fixed-priorit
 
 ## 7. Repository layout
 
-See the tree above. `third_party/psprecomp` is pinned to upstream `main` merge commit `5ca18fa` (12 commits past v0.5.0: missing VFPU instructions, delay slots, the module loader) and moves to the next tag when one appears; moving the pin updates `src/recomp_abi/` in the same task. `third_party/repsp` is pinned temporarily to the repsp issue #1 task-branch commit and moves to its merge commit once repsp is merged.
+See the tree above. `third_party/psprecomp` is pinned to upstream `main` merge commit `5ca18fa` (12 commits past v0.5.0: missing VFPU instructions, delay slots, the module loader) and moves to the next tag when one appears; moving the pin updates `src/recomp_abi/` in the same task. `third_party/repsp` is pinned to the repsp v0.0.1 merge commit `730c404`.
 
 ## 8. Verification for this task
 
