@@ -62,6 +62,7 @@ repsp_apply_host_flags(redmp1_game)
 add_executable(redmp1
     src/app/main.cpp
 )
+target_compile_definitions(redmp1 PRIVATE REDMP1_VERSION="${REDMP1_VERSION_STRING}")
 target_link_libraries(redmp1 PRIVATE
     redmp1_game
     repsp::runtime

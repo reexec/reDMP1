@@ -6,6 +6,10 @@
 #include <string>
 #include <vector>
 
+#ifndef REDMP1_VERSION
+#define REDMP1_VERSION "0.0.0"
+#endif
+
 namespace
 {
 
@@ -61,7 +65,7 @@ int main(int argc, char* argv[])
     }
     if (arg1 == "--version" || arg1 == "-v")
     {
-        std::cout << "redmp1 version 0.0.0 (portable native port of DJMAX Portable)\n";
+        std::cout << "redmp1 version " << REDMP1_VERSION << " (portable native port of DJMAX Portable)\n";
         return 0;
     }
 
