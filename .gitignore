@@ -1,0 +1,52 @@
+# Game data. Nothing from the disc -- executables, PRX modules, assets, or the
+# ISO -- is ever committed. Users supply their own dump (see docs/guides/).
+roms/
+*.iso
+*.cso
+*.pbp
+*.prx
+EBOOT.BIN
+BOOT.BIN
+
+# PSP key material is supplied by the user and never committed.
+psp_keys.txt
+
+# Code mechanically generated from the game's executable (the lifted C). It is
+# derived from copyrighted code, so it is rebuilt locally and never committed.
+gen/
+src/game/dmp1/recomp/generated/
+
+# Build trees and local tool installs.
+build/
+out/
+tools/downloads/
+
+# Reference checkouts fetched for study only.
+third_party/refs/
+
+# Per-user state written at run time.
+redmp1.ini
+cfg/
+saves/
+ms0/
+cache/
+
+# Local run artifacts and logs.
+*.log
+run*.txt
+redmp1_*.txt
+
+# IDE and OS clutter.
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.tmp
+*.obj
+__pycache__/
+*.pyc
+
+# Diagnostic captures and frame dumps (pictures of the game)
+capture_*
+frame_*.bmp
