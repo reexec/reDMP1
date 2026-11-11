@@ -25,25 +25,6 @@ std::string ToHex(const uint8_t* data, size_t length)
     return oss.str();
 }
 
-std::string Trim(const std::string& str)
-{
-    size_t first = 0;
-    while (first < str.size() && (std::isspace(static_cast<unsigned char>(str[first])) != 0))
-    {
-        ++first;
-    }
-    if (first == str.size())
-    {
-        return "";
-    }
-    size_t last = str.size() - 1;
-    while (last > first && (std::isspace(static_cast<unsigned char>(str[last])) != 0))
-    {
-        --last;
-    }
-    return str.substr(first, last - first + 1);
-}
-
 // Simple JSON string unescaper
 std::string ParseJsonString(const std::string& input, size_t& pos)
 {
