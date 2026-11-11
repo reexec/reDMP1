@@ -1,0 +1,6 @@
+[submodule "third_party/repsp"]
+	path = third_party/repsp
+	url = https://github.com/reexec/repsp
+[submodule "third_party/psprecomp"]
+	path = third_party/psprecomp
+	url = https://github.com/sp00nznet/psprecomp
