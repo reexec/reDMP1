@@ -84,14 +84,45 @@ set_tests_properties(app_smoke_nonexistent_dir PROPERTIES WILL_FAIL TRUE)
 add_test(NAME app_smoke_missing_sfo COMMAND $<TARGET_FILE:redmp1> "${CMAKE_CURRENT_SOURCE_DIR}/include")
 set_tests_properties(app_smoke_missing_sfo PROPERTIES WILL_FAIL TRUE)
 
-# Smoke 4: Directory with invalid/unregistered SFO -> non-zero exit code
-set(UNREGISTERED_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/fixtures/unregistered_game")
-file(MAKE_DIRECTORY "${UNREGISTERED_FIXTURE_DIR}/PSP_GAME")
-file(WRITE "${UNREGISTERED_FIXTURE_DIR}/PSP_GAME/PARAM.SFO" "INVALID_SFO_DATA")
-add_test(NAME app_smoke_unregistered COMMAND $<TARGET_FILE:redmp1> "${UNREGISTERED_FIXTURE_DIR}")
-set_tests_properties(app_smoke_unregistered PROPERTIES WILL_FAIL TRUE)
+# Smoke 4: Directory with corrupt/invalid SFO -> exits with InvalidParamSfo (3)
+set(INVALID_SFO_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/fixtures/invalid_sfo_game")
+file(MAKE_DIRECTORY "${INVALID_SFO_FIXTURE_DIR}/PSP_GAME")
+file(WRITE "${INVALID_SFO_FIXTURE_DIR}/PSP_GAME/PARAM.SFO" "INVALID_SFO_DATA")
+add_test(NAME app_smoke_invalid_sfo
+    COMMAND ${CMAKE_COMMAND}
+        "-DCMD=$<TARGET_FILE:redmp1>"
+        "-DARGS=${INVALID_SFO_FIXTURE_DIR}"
+        "-DEXPECTED_CODE=3"
+        "-DEXPECTED_REGEX=Failed to parse PARAM.SFO"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_exit_code.cmake"
+)
 
-# Smoke 5: Registered roms (if present in local tree)
+# Smoke 5: Directory with valid SFO of unregistered DISC_ID -> exits with UnregisteredVariant (5)
+set(UNREGISTERED_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/fixtures/unregistered_game")
+file(MAKE_DIRECTORY "${UNREGISTERED_FIXTURE_DIR}/PSP_GAME/SYSDIR")
+file(WRITE "${UNREGISTERED_FIXTURE_DIR}/PSP_GAME/SYSDIR/BOOT.BIN" "DUMMY_EXECUTABLE_CONTENT_FOR_SMOKE_TEST")
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_synthetic_sfo.py"
+            "${UNREGISTERED_FIXTURE_DIR}/PSP_GAME/PARAM.SFO"
+            --disc-id "TEST00000"
+            --disc-version "1.00"
+            --title "Synthetic Test Game"
+    RESULT_VARIABLE gen_res
+)
+if(NOT gen_res EQUAL 0)
+    message(WARNING "Failed to generate synthetic SFO for smoke test")
+endif()
+add_test(NAME app_smoke_unregistered
+    COMMAND ${CMAKE_COMMAND}
+        "-DCMD=$<TARGET_FILE:redmp1>"
+        "-DARGS=${UNREGISTERED_FIXTURE_DIR}"
+        "-DEXPECTED_CODE=5"
+        "-DEXPECTED_REGEX=Unregistered variant"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_exit_code.cmake"
+)
+
+# Smoke 6: Registered roms (if present in local tree)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/PARAM.SFO")
     add_test(NAME app_smoke_registered_roms COMMAND $<TARGET_FILE:redmp1> "${CMAKE_CURRENT_SOURCE_DIR}/roms" --variants "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/variants.json")
 endif()
