@@ -222,10 +222,61 @@ Total Test time (real) = 0.19 sec
 
 ## 5. 질문 (Questions for Reviewer)
 
-* 없음: 작업 지시서의 모든 요구사항(submodule, build, lifter, title layer, scripts, analysis, app, docs, CI, verification)이 정상 구현 및 검증 완료되었습니다.
+* 없음: 리뷰 1에서 제기된 R1~R5 요구사항이 모두 반영되었으며, 4개 타깃 환경(Win64 Debug/Release, Linux x64 Debug/Release)에서 11개 테스트가 모두 100% 통과했습니다.
+
+---
+
+## 6. 리뷰 1 반영 (Review 1 Application)
+
+리뷰 1의 지적 사항(R1~R5)을 브랜치 `i001-project-bootstrap`에 모두 반영하고 빌드 및 테스트를 통과했습니다.
+
+### 6.1. 반영 항목별 세부 내용
+1. **R1 (BOOT.BIN과 EBOOT.BIN 비교 서술 정밀화)**:
+   * `docs/analysis/disc-image.md` 및 `docs/analysis/executable.md`: 소니 `~PSP` 헤더 내 크기, 엔트리(`0x00000128`), 세그먼트 크기 일치는 **확인됨**, 바이트 단위 내용 동일성은 **추정**(복호화 전까지)으로 명확히 구분.
+   * `BOOT.BIN`을 lift 입력으로 쓰는 근거는 원본 디스크의 독자 실행 가능성에 두고, `EBOOT.BIN` 복호화 후 diff 검증을 미해결 과제로 기록.
+   * 커밋: `8e1478b`
+2. **R2 (smoke 테스트 분리와 종료 코드 검증)**:
+   * `cmake/check_exit_code.cmake` 러너 스크립트 작성: 실행 파일의 반환 코드 및 정규식 출력을 정확히 검증.
+   * `scripts/generate_synthetic_sfo.py`: 유효한 구조이지만 등록되지 않은 타이틀 ID(`TEST00000`)를 가진 합성 SFO 생성 스크립트 추가.
+   * 테스트 분리:
+     * `app_smoke_invalid_sfo`: 비정상/손상된 SFO 파일 거부 검증 (종료 코드 3 `REDMP1_EXIT_BAD_SFO`).
+     * `app_smoke_unregistered`: 유효한 SFO이나 `variants.json`에 미등록된 디렉터리 거부 검증 (종료 코드 5 `REDMP1_EXIT_UNREGISTERED_VARIANT`).
+   * 커밋: `e3a6692`
+3. **R3 (REPSP_BUILD_PROBES FORCE 제거)**:
+   * 루트 `CMakeLists.txt`에서 `set(REPSP_BUILD_PROBES ON CACHE BOOL ...)` 시 `FORCE` 키워드를 제거하여 상위 호출자나 사용자의 `-DREPSP_BUILD_PROBES=OFF` 설정을 존중하도록 수정.
+   * 커밋: `7ab207b`
+4. **R4 (REDMP1_VERSION 컴파일 정의 전달)**:
+   * 루트 `CMakeLists.txt`에서 `target_compile_definitions(redmp1 PRIVATE REDMP1_VERSION="${REDMP1_VERSION_STRING}")` 추가.
+   * `src/app/main.cpp`의 `--version` 처리부에서 `repsp::runtime::GetVersionString()` 대신 `REDMP1_VERSION`을 출력하도록 수정.
+   * 커밋: `b856746`
+5. **R5 (allegrexrecomp 소스 수집 간소화)**:
+   * 루트 `CMakeLists.txt`의 `allegrexrecomp` 타깃 소스 수집을 `file(GLOB ALLEGREXRECOMP_SRCS CONFIGURE_DEPENDS "${ALLEGREXRECOMP_SRC_DIR}/*.c" "${ALLEGREXRECOMP_SRC_DIR}/crypto/*.c")`로 단일화.
+   * 커밋: `c563bae`
+
+### 6.2. 리뷰 1 반영 후 CTest 검증 결과 (11/11 100% 통과)
+* **Win64 Debug** (`build/win64-debug`):
+  ```
+  100% tests passed, 0 tests failed out of 11
+  Total Test time (real) = 0.81 sec
+  ```
+* **Win64 Release** (`build/win64-release`):
+  ```
+  100% tests passed, 0 tests failed out of 11
+  Total Test time (real) = 0.78 sec
+  ```
+* **Linux x64 Debug** (WSL Ubuntu-24.04, `/tmp/redmp1-linux-debug`):
+  ```
+  100% tests passed, 0 tests failed out of 11
+  Total Test time (real) = 0.40 sec
+  ```
+* **Linux x64 Release** (WSL Ubuntu-24.04, `/tmp/redmp1-linux-release`):
+  ```
+  100% tests passed, 0 tests failed out of 11
+  Total Test time (real) = 0.28 sec
+  ```
 
 ---
 
 # Work Log: Project Bootstrap (English)
 
-See sections above for summary of work, verification results across 4 target configurations (Win64 Debug/Release, Linux Debug/Release), measurements, design decisions, and questions.
+See sections above for summary of work, verification results across 4 target configurations (Win64 Debug/Release, Linux Debug/Release), measurements, design decisions, questions, and Review 1 updates (R1-R5).
