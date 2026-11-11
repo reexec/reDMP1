@@ -34,3 +34,25 @@ Already done (main `c601d7f`, task branch `i001-project-bootstrap`): `LICENSE`, 
 Commits: one per unit of work, titles ending in `(#1)`. Before each commit check with `git status` that `roms/`, ISOs and `generated/` are absent.
 
 Done when: design §8, items 1-6.
+
+---
+
+## 리뷰 1 (2026-11-12, `57cb3df` 기준)
+
+검증: 리뷰어가 깨끗한 빌드 디렉터리에서 Win64 Debug/Release 빌드와 CTest 10/10, Linux x64 Release(WSL Ubuntu 24.04) 빌드와 CTest 10/10, `redmp1 roms` 식별 성공(`ULKS46050` 1.02, `BOOT.BIN` SHA-1 일치)을 다시 확인했다. 게임 데이터와 `generated/`(147개 파일)는 추적되지 않는다. 분석 문서에 사용자 덤프 정보는 없다. 아래를 고친다.
+
+| # | 위치 | 문제 | 요청 |
+|---|---|---|---|
+| R1 | `docs/analysis/disc-image.md`, `docs/analysis/executable.md` | `~PSP` 헤더 값(ELF 크기, 진입점, 세그먼트, BSS)이 `BOOT.BIN`과 같다는 것에서 "코드와 데이터가 완전히 동일"을 **확인됨**으로 적었다. 바이트 비교는 하지 않았다(psprecomp는 복호화를 아직 하지 않는다). | 헤더 값 일치는 **확인됨**, 내용이 동일하다는 결론은 **추정**으로 적는다. lift 입력이 `BOOT.BIN`인 근거(키가 필요 없고 헤더가 일치)는 그대로 둔다. "남은 확인"에 "복호화가 가능해지면(psprecomp의 복호화 또는 사용자 키) 바이트 단위로 비교"를 남긴다. `disc-image.md`의 미확정 절도 "(없음)"이 아니라 이 항목으로 바꾼다. |
+| R2 | `CMakeLists.txt`의 `app_smoke_unregistered` | 내용이 `INVALID_SFO_DATA`인 파일이라 "등록되지 않은 `DISC_ID`"가 아니라 "깨진 SFO"를 검사한다(설계 §8-2). | 이 검사는 `app_smoke_invalid_sfo`로 이름을 바꿔 둔다. 그리고 `DISC_ID`가 다른 올바른 합성 `PARAM.SFO`(예: `TEST00000`, 1.00)로 `app_smoke_unregistered`를 새로 만든다. 합성 파일은 configure 때 작은 생성기(CMake 또는 표준 라이브러리 Python)로 만들고, 종료 코드가 "미등록" 상태 값인지까지 확인한다. |
+| R3 | `CMakeLists.txt` | `set(REPSP_BUILD_PROBES ON CACHE BOOL ... FORCE)`가 사용자 설정을 덮어쓴다. | `FORCE`를 뺀다(기본 ON, 사용자가 끌 수 있게). |
+| R4 | `src/app/main.cpp` | `--version`이 `0.0.0`을 하드코딩한다. | `VERSION` 파일에서 온 값을 CMake compile definition으로 넘긴다. |
+| R5 | `CMakeLists.txt`의 `allegrexrecomp` | 소스 목록이 손으로 적혀 있어 psprecomp 고정을 옮길 때 파일이 늘면 깨진다. | `tools/allegrexrecomp/*.c`와 `crypto/*.c`를 `file(GLOB ... CONFIGURE_DEPENDS)`로 모은다(psprecomp 런타임 `src/`는 여전히 넣지 않는다). |
+
+완료 기준: R1~R5 반영, Win64 Debug/Release와 Linux x64 빌드·CTest 통과, 작업 로그에 "리뷰 1 반영" 절 추가.
+
+## Review 1 (2026-11-12, at `57cb3df`)
+
+Verification: from clean build directories the reviewer re-ran the Win64 Debug/Release builds with CTest 10/10, the Linux x64 Release build (WSL Ubuntu 24.04) with CTest 10/10, and `redmp1 roms` identification (`ULKS46050` 1.02, `BOOT.BIN` SHA-1 matches). Game data and `generated/` (147 files) are untracked, and the analysis documents carry no user-dump information. Fix the items in the table above: R1 the matching `~PSP` header values are **confirmed** but "identical code and data" is **inferred** (no byte comparison was made; psprecomp does not decrypt yet), keeping the grounds for lifting `BOOT.BIN`, adding "compare byte by byte once decryption is possible" to the open checks, and turning the unresolved section of `disc-image.md` into that item; R2 `app_smoke_unregistered` feeds a broken SFO, so rename it `app_smoke_invalid_sfo` and add a real `app_smoke_unregistered` with a valid synthetic `PARAM.SFO` of another `DISC_ID` (for example `TEST00000`, 1.00) generated at configure time, checking the exit code is the "unregistered" status; R3 drop `FORCE` from `REPSP_BUILD_PROBES`; R4 pass the version from `VERSION` as a compile definition instead of hard-coding `0.0.0`; R5 collect the `allegrexrecomp` sources with `file(GLOB ... CONFIGURE_DEPENDS)` over `tools/allegrexrecomp/*.c` and `crypto/*.c` (still never psprecomp's runtime `src/`).
+
+Done when: R1-R5 are in, the Win64 Debug/Release and Linux x64 builds and CTest pass, and the work log has a "Review 1" section.
