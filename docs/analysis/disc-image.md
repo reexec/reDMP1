@@ -30,9 +30,7 @@ DJMAX Portable 한국판 원본 UMD의 신원과 구성이다. 신원은 [redump
 
 ## 미확정
 
-(없음 - issue #1에서 해결됨)
-
-* **확인됨**: `BOOT.BIN`과 `EBOOT.BIN`의 일치 여부: `allegrexrecomp info` 헤더 분석을 통해 `EBOOT.BIN`의 복호화 대상 ELF 크기(1,463,072 바이트), 부트 엔트리(`0x00000128`), 세그먼트 배치 및 BSS 크기가 평문 ELF인 `BOOT.BIN`과 완전히 일치함이 확인되었다. 상세 내용은 [executable.md](executable.md)에 기록되었으며, 복호화 키 없이 `BOOT.BIN`을 lift 입력으로 직접 사용한다.
+* `BOOT.BIN`과 `EBOOT.BIN` 내용의 완전 일치 여부: `allegrexrecomp info` 헤더 분석을 통해 `EBOOT.BIN`의 복호화 대상 ELF 크기(1,463,072 바이트), 부트 엔트리(`0x00000128`), 세그먼트 배치 및 BSS 크기가 평문 ELF인 `BOOT.BIN`과 완전히 일치함이 확인되었다(**확인됨**). 다만 현재 복호화를 직접 거치지 않았으므로 바이트 단위 내용의 완전 일치는 **추정**으로 분류하며, 추후 복호화 수단(psprecomp 지원 또는 사용자 키) 확보 시 바이트 비교를 통해 최종 확정할 예정이다. 현재 lift 입력은 헤더 규격이 일치하고 키가 불필요한 평문 `BOOT.BIN`을 사용한다.
 
 ---
 
@@ -55,6 +53,4 @@ See the table above: UMD (DL) with layerbreak 442,560, serial ULKS-46050, versio
 
 ## Unresolved
 
-(None - resolved in issue #1)
-
-* **Confirmed**: `BOOT.BIN` vs `EBOOT.BIN` identity: `allegrexrecomp info` header analysis confirmed that `EBOOT.BIN`'s target decrypted ELF size (1,463,072 bytes), boot entry (`0x00000128`), segment layout and BSS size match plain ELF `BOOT.BIN` exactly. Details are documented in [executable.md](executable.md), and `BOOT.BIN` is used directly as the lift input without external decryption keys.
+* Byte-by-byte identity between `BOOT.BIN` and decrypted `EBOOT.BIN`: `allegrexrecomp info` header analysis confirmed that container dimensions (ELF size 1,463,072 bytes, entry `0x00000128`, segments, BSS) match plain ELF `BOOT.BIN` exactly (**confirmed**). However, because no decryption was performed yet, identity of the actual byte contents is classified as **inferred** until byte-level verification can be executed (once decryption is supported by psprecomp or keys are available). Recompilation proceeds with plain `BOOT.BIN`.

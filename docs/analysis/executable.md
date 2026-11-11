@@ -103,8 +103,10 @@ flowchart LR
     EBOOT -. "완전 일치 (Exact Match)" .- BOOT
 ```
 
-* **확인됨**: `EBOOT.BIN`의 `~PSP` 헤더에 기록된 복호화 후 ELF 크기(`elf size`: 1,463,072 바이트), 부트 엔트리(`boot_entry`: `0x00000128`), 세그먼트 0 크기(1,028,240 바이트), 세그먼트 1 메모리 크기(2,718,852 바이트), BSS 크기(2,594,336 바이트)는 평문 ELF인 `BOOT.BIN`의 파일 크기 및 세그먼트 구조와 1바이트 오차 없이 완전히 일치한다.
-* **결론 (확인됨)**: `BOOT.BIN`은 `EBOOT.BIN`의 암호화 전 원본 평문 실행 파일과 완전히 동일한 코드 및 데이터 배치를 갖는다. 따라서 재컴파일을 위해 복호화 키(`psp_keys.txt`)를 준비할 필요 없이, 평문 `BOOT.BIN`을 직접 lift 입력으로 사용하여 C 코드를 생성할 수 있다.
+* **확인됨 (헤더 값 일치)**: `EBOOT.BIN`의 `~PSP` 헤더에 기록된 복호화 후 ELF 크기(`elf size`: 1,463,072 바이트), 부트 엔트리(`boot_entry`: `0x00000128`), 세그먼트 0 크기(1,028,240 바이트), 세그먼트 1 메모리 크기(2,718,852 바이트), BSS 크기(2,594,336 바이트)는 평문 ELF인 `BOOT.BIN`의 파일 크기 및 세그먼트 구조와 1바이트 오차 없이 완전히 일치한다.
+* **추정 (내용 동일성)**: 헤더의 모든 메타데이터와 세그먼트 배치가 완전히 일치하므로 `BOOT.BIN`은 `EBOOT.BIN`의 암호화 전 원본 평문 실행 파일과 완전히 동일한 코드 및 데이터 배치를 가질 것으로 추정된다.
+* **lift 입력 근거**: 외부 복호화 키(`psp_keys.txt`) 없이도 즉시 분석과 기계적 C 코드 생성을 진행할 수 있고 헤더 규격이 일치하므로 평문 `BOOT.BIN`을 lift 입력으로 사용한다.
+* **남은 확인**: psprecomp에 복호화 기능이 구현되거나 사용자 키가 확보되어 `EBOOT.BIN`을 완전히 복호화할 수 있게 되면, 두 바이너리의 코드 및 데이터 영역을 바이트 단위로 대조하여 내용의 완전 일치 여부를 확정한다.
 
 ---
 
@@ -140,5 +142,7 @@ This document records facts confirmed by analyzing the original UMD executables 
 
 ## 5. BOOT.BIN vs EBOOT.BIN Comparison Conclusion
 
-* **Confirmed**: `EBOOT.BIN`'s `~PSP` header specifies an unencrypted ELF size of 1,463,072 bytes, an entry of `0x00000128`, and segment dimensions that exactly match the unencrypted `BOOT.BIN` file.
-* **Conclusion**: `BOOT.BIN` is identical to the decrypted code of `EBOOT.BIN`. Recompilation proceeds directly with `BOOT.BIN` without requiring external decryption keys.
+* **Confirmed (Matching Headers)**: `EBOOT.BIN`'s `~PSP` header specifies an unencrypted ELF size of 1,463,072 bytes, an entry of `0x00000128`, segment 0 size of 1,028,240 bytes, segment 1 memory size of 2,718,852 bytes, and BSS size of 2,594,336 bytes, exactly matching the unencrypted `BOOT.BIN` file dimensions.
+* **Inferred (Identical Content)**: Because all container dimensions, entry points, and segment mappings match without discrepancy, `BOOT.BIN` is inferred to contain identical code and data to decrypted `EBOOT.BIN`.
+* **Grounds for Lifting BOOT.BIN**: Plain `BOOT.BIN` requires no external decryption keys (`psp_keys.txt`) and matches all container parameters, making it the practical choice for lifting and analysis.
+* **Open Checks**: Compare byte-by-byte against decrypted `EBOOT.BIN` once decryption becomes available (via psprecomp feature updates or user-provided keys).
