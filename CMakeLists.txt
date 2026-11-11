@@ -23,18 +23,11 @@ add_subdirectory("${REDMP1_REPSP_DIR}" repsp)
 
 # 2. Host tool: allegrexrecomp (from third_party/psprecomp without psprecomp runtime target)
 set(ALLEGREXRECOMP_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/psprecomp/tools/allegrexrecomp")
-add_executable(allegrexrecomp
-    ${ALLEGREXRECOMP_SRC_DIR}/decode.c
-    ${ALLEGREXRECOMP_SRC_DIR}/container.c
-    ${ALLEGREXRECOMP_SRC_DIR}/analyze.c
-    ${ALLEGREXRECOMP_SRC_DIR}/emit.c
-    ${ALLEGREXRECOMP_SRC_DIR}/keys.c
-    ${ALLEGREXRECOMP_SRC_DIR}/crypto/aes.c
-    ${ALLEGREXRECOMP_SRC_DIR}/crypto/cmac.c
-    ${ALLEGREXRECOMP_SRC_DIR}/crypto/sha1.c
-    ${ALLEGREXRECOMP_SRC_DIR}/crypto/kirk.c
-    ${ALLEGREXRECOMP_SRC_DIR}/main.c
+file(GLOB ALLEGREXRECOMP_SRCS CONFIGURE_DEPENDS
+    "${ALLEGREXRECOMP_SRC_DIR}/*.c"
+    "${ALLEGREXRECOMP_SRC_DIR}/crypto/*.c"
 )
+add_executable(allegrexrecomp ${ALLEGREXRECOMP_SRCS})
 target_include_directories(allegrexrecomp PRIVATE ${ALLEGREXRECOMP_SRC_DIR})
 if(MSVC)
     target_compile_options(allegrexrecomp PRIVATE /W3 /MP /utf-8)
