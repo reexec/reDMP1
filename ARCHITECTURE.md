@@ -37,10 +37,17 @@ flowchart TD
    * `repsp::module::ParamSfo`를 사용하여 `PSP_GAME/PARAM.SFO`로부터 `DISC_ID`, `DISC_VERSION`, `TITLE` 추출.
    * `repsp::runtime::ComputeSha1`을 사용하여 후보 실행 파일의 SHA-1 해시 검증.
 3. **`recomp_abi` (`src/recomp_abi/`, 타깃 `redmp1_recomp_abi`)**:
-   * `allegrexrecomp`가 기계적으로 생성한 C 코드가 호출하는 `psprecomp` 심볼(`psp_cpu`, `psp_read32`, `psp_write32`, `psp_hle_call`, VFPU 도우미 등)을 정의.
-   * `repsp`의 재컴파일 코드 계약(`include/repsp/recomp/guest_cpu.h`)의 콜백 표(`repsp_guest_cpu_ops`)를 등록하여 repsp 런타임에 바인딩.
+   * `allegrexrecomp`가 기계적으로 생성한 C 코드가 호출하는 `psprecomp` ABI 인터페이스(`psp_cpu`, `psp_read*`, `psp_write*`, `psp_hle_call`, `psp_syscall`, VFPU 행렬 연산자 등)를 완벽하게 구현하여 `repsp`의 재컴파일 코드 계약(`include/repsp/recomp/guest_cpu.h`) 및 메모리 계층에 바인딩.
+   * `cpu.c`: `psp_cpu_t psp_cpu` 전역 레지스터 상태 정의 및 `repsp_guest_cpu_ops` 콜백(`save`, `restore`, `get_gpr`, `set_gpr`, `call_guest`) 구현과 등록.
+   * `mem.c`: `psp_read8/16/32/64`, `psp_write8/16/32/64` 인라인 메모리 접근자를 `repsp_guest_read*`, `repsp_guest_write*`에 매핑.
+   * `dispatch.c`: 재컴파일된 함수 디스패치 테이블 및 `psp_dispatch_call` 라우팅.
+   * `trap.c`: `psp_hle_call`, `psp_syscall`, `psp_trap` 처리 및 `stop_on_hle` 디버깅/테스트 트랩 구현.
+   * `vfpu.c`: psprecomp가 생성하는 VFPU 전치, 행렬 연산 매크로 도우미.
    * **`repsp`는 `psprecomp`에 의존하지 않으며**, 어댑터는 reDMP1 내부에 위치함.
-4. **`repsp` (`third_party/repsp`, 공유 서브모듈)**:
+4. **`recomp` (`src/game/dmp1/recomp/generated/`, 타깃 `redmp1_recomp`)**:
+   * `allegrexrecomp emit`으로 기계적으로 생성된 8,784개 함수의 C 구현체(138개 번들 번역 단위 `dmp1_funcs_000..137.c` + `dmp1_imports.c` + `dmp1_register.c`).
+   * `redmp1_recomp_abi`를 통해 런타임과 연결되며, `redmp1` 실행 파일에 정적 라이브러리로 링크.
+5. **`repsp` (`third_party/repsp`, 공유 서브모듈)**:
    * 타이틀 중립적이며 독립적으로 재사용 가능한 PSP 런타임 라이브러리.
    * `GuestMemory`: 512 MiB 가상 주소 공간 예약 및 `0x1FFFFFFF` 미러링 접기 주소 변환.
    * `NidRegistry`: NID 기반 시스템 콜 디스패치 및 통계 수집.

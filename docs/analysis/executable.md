@@ -110,6 +110,64 @@ flowchart LR
 
 ---
 
+## 6. PRX 기본 주소 재배치(0x08804000) 및 함수 탐색 변화
+
+PSP 사용자 모드에서 타이틀 PRX 모듈은 기본 주소 `0x08804000`에 로드된다. 기본 주소 0(미재배치)과 `0x08804000` 재배치 후의 `allegrexrecomp` 분석 결과 비교는 다음과 같다.
+
+```mermaid
+flowchart TD
+    subgraph Base0["미재배치 (base 0x00000000)"]
+        S0["Seeds: 5,967개 (원본) / 4,399개 (패치 0002)"]
+        F0["발견 함수: 9,159개 / 9,062개"]
+        C0["커버리지: 92.4% (761,108 B)"]
+    end
+    subgraph BaseReloc["실제 런타임 재배치 (base 0x08804000)"]
+        S1["Seeds: 4,211개"]
+        F1["발견 함수: 8,784개"]
+        C1["커버리지: 92.0% (757,820 / 823,684 B)"]
+        VFPU["VFPU 트랩: 0개 (0.00%)"]
+    end
+    Base0 --> BaseReloc
+```
+
+* **시드(Seeds) 수 감소 원인 (5,967 -> 4,399 -> 4,211)**:
+  - 원본 psprecomp의 `psp_collect_pointer_seeds`는 재배치 포인터가 속한 세그먼트의 베이스 오프셋(`ofsbase`/`addrbase`)을 반영하지 않아 데이터 영역 포인터가 잘못된 주소로 해석되는 버그가 있었다.
+  - 패치 `0002-seed-harvest-segment-bases.patch`를 적용하면서 비정상 시드들이 올바르게 필터링되어 시드 수가 5,967개에서 4,399개로 정제되었다.
+  - `0x08804000` 재배치 시 세그먼트 0과 1의 실제 가상 주소 경계가 적용되어 최종 4,211개 시드로 수렴하였다.
+* **함수 수 및 커버리지 (9,159 -> 8,784개, 92.4% -> 92.0%)**:
+  - 잘못된 시드에서 출발한 가짜(false-positive) 함수 탐색이 배제되어 순수한 유효 함수 8,784개(138개 번들 C 파일로 분할 emit)가 식별되었다.
+  - 189,455개 명령어 중 VFPU 트랩으로 방출된 명령어는 0개(0.00%)로, 모든 명령어가 C 코드로 안전하게 변환되었다.
+* **MSVC 빌드 시간 및 라이브러리 크기**:
+  - `redmp1_recomp.lib` 릴리스 빌드 시간: 약 22.8초 (`cmake --build --config Release --target redmp1_recomp`).
+  - 정적 라이브러리 크기: 34,940,406 바이트 (~33.3 MiB, 138개 func 파일 + imports + register).
+  - 총 오브젝트(.obj) 크기: 33,894,903 바이트 (~32.3 MiB).
+  - 64개 단위 분할 emit 덕분에 개별 파일의 섹션 수가 제한되어 `/bigobj` 없이도 정상 컴파일된다(안전을 위해 옵션 유지).
+
+---
+
+## 7. 최초 펌웨어 호출(First Firmware Call) 정적 및 동적 분석
+
+게스트 엔트리 포인트(`0x08804128`)에서 최초로 호출하는 PSP 펌웨어 라이브러리 API는 다음과 같이 확인되었다.
+
+```mermaid
+sequenceDiagram
+    participant Guest as 게스트 진입점 (0x08804128)
+    participant Thunk as 임포트 스텁 (0x088CCD6C)
+    participant HLE as repsp NID Handler
+    Guest->>Thunk: jal 0x088CCD6C
+    Note over Thunk: ThreadManForUser:0x446D8DE6<br/>(sceKernelCreateThread)
+    Thunk->>HLE: psp_hle_call(0x446D8DE6)
+    Note over HLE: STOPPED_ON_FIRST_HLE_CALL
+```
+
+* **호출 위치**: `0x0880419C` (`jal 0x088CCD6C`)
+* **임포트 스텁**: `psp_import_088CCD6C` -> `ThreadManForUser:0x446D8DE6`
+* **함수 기호(Symbol)**: `sceKernelCreateThread`
+* **출처(Provenance)**: 공용 PSP SDK(psp-sdk) NID 데이터베이스에 정식 등재된 기호로, 비공개나 난독화된 기호가 아닌 정규 공개 API이다.
+* **동적 검증(`redmp1 roms --lift-check`)**: GuardedRun 환경에서 게스트 코드를 구동한 결과, 0회의 간접 디스패치 후 정확히 `ThreadManForUser:0x446D8DE6`에서 최초 HLE 트랩이 포착되고 성공적으로 정지하였다.
+
+---
+
 # Executable Analysis: DJMAX Portable (ULKS-46050) (English)
 
 This document records facts confirmed by analyzing the original UMD executables (`PSP_GAME/SYSDIR/BOOT.BIN` and `EBOOT.BIN`) using `allegrexrecomp`.
@@ -146,3 +204,17 @@ This document records facts confirmed by analyzing the original UMD executables 
 * **Inferred (Identical Content)**: Because all container dimensions, entry points, and segment mappings match without discrepancy, `BOOT.BIN` is inferred to contain identical code and data to decrypted `EBOOT.BIN`.
 * **Grounds for Lifting BOOT.BIN**: Plain `BOOT.BIN` requires no external decryption keys (`psp_keys.txt`) and matches all container parameters, making it the practical choice for lifting and analysis.
 * **Open Checks**: Compare byte-by-byte against decrypted `EBOOT.BIN` once decryption becomes available (via psprecomp feature updates or user-provided keys).
+
+## 6. PRX Base Address Relocation (0x08804000) and Function Analysis
+
+* **Relocation Base**: Loaded at `0x08804000` (standard PSP user module base).
+* **Seed Refinement (5,967 -> 4,399 -> 4,211)**: Patch `0002-seed-harvest-segment-bases.patch` fixed segment base calculation in `allegrexrecomp`, eliminating false seeds originating from unmapped data offsets.
+* **Functions & Coverage**: 8,784 functions (split across 138 C translation units), 757,820 bytes reached (92.0% of `.text`). 0 VFPU trap instructions emitted (0.00%).
+* **MSVC Build Metrics**: Release build of `redmp1_recomp.lib` completes in ~22.8 seconds; static library size is 34.9 MiB (33.8 MiB total object size).
+
+## 7. First Firmware Call
+
+* **Site**: `0x0880419C` (`jal 0x088CCD6C`).
+* **Import Target**: `ThreadManForUser:0x446D8DE6` (`psp_import_088CCD6C`).
+* **Canonical Symbol**: `sceKernelCreateThread` in the public PSP SDK database.
+* **Runtime Verification**: `redmp1 roms --lift-check` executes entry point `0x08804128` under `GuardedRun`, cleanly captures the first HLE call at `ThreadManForUser:0x446D8DE6`, and terminates with status `STOPPED_ON_FIRST_HLE_CALL`.
