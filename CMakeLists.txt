@@ -62,7 +62,32 @@ else()
     target_link_libraries(allegrexrecomp PRIVATE m)
 endif()
 
-# 3. Layer target: redmp1_game (title layer: profile, variant identification)
+# 3. psprecomp ABI adapter target
+add_library(redmp1_recomp_abi STATIC
+    src/recomp_abi/cpu.c
+    src/recomp_abi/mem.c
+    src/recomp_abi/dispatch.c
+    src/recomp_abi/trap.c
+    src/recomp_abi/vfpu.c
+)
+target_include_directories(redmp1_recomp_abi PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/recomp_abi>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/psprecomp/include>
+)
+target_link_libraries(redmp1_recomp_abi PUBLIC
+    repsp::recomp
+    repsp::module
+    repsp::runtime
+)
+if(MSVC)
+    target_compile_options(redmp1_recomp_abi PRIVATE /W3 /MP /utf-8)
+    target_compile_definitions(redmp1_recomp_abi PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(redmp1_recomp_abi PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    target_link_libraries(redmp1_recomp_abi PRIVATE m)
+endif()
+
+# 4. Layer target: redmp1_game (title layer: profile, variant identification)
 add_library(redmp1_game STATIC
     src/game/dmp1/dmp1_profile.cpp
 )
@@ -96,6 +121,18 @@ target_link_libraries(reloc_check PRIVATE
     repsp::module
 )
 repsp_apply_host_flags(reloc_check)
+
+# recomp_abi_probe (CI test, runs without game data)
+add_executable(recomp_abi_probe
+    tests/recomp_abi_probe.cpp
+)
+target_link_libraries(recomp_abi_probe PRIVATE
+    redmp1_recomp_abi
+    repsp::runtime
+    repsp::platform
+)
+repsp_apply_host_flags(recomp_abi_probe)
+add_test(NAME recomp_abi_probe COMMAND $<TARGET_FILE:recomp_abi_probe>)
 
 # 5. CTest and Smoke Tests
 enable_testing()
