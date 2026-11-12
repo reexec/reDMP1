@@ -33,11 +33,12 @@ set(ALLEGREXRECOMP_PATCHES
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/psprecomp/0001-relocate-prx-at-base.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/psprecomp/0002-seed-harvest-segment-bases.patch"
 )
+file(RELATIVE_PATH ALLEGREXRECOMP_REL_DIR "${CMAKE_CURRENT_SOURCE_DIR}" "${ALLEGREXRECOMP_BUILD_DIR}")
 
 foreach(patch IN LISTS ALLEGREXRECOMP_PATCHES)
     execute_process(
-        COMMAND "${GIT_EXECUTABLE}" apply -p3 --whitespace=nowarn "${patch}"
-        WORKING_DIRECTORY "${ALLEGREXRECOMP_BUILD_DIR}"
+        COMMAND "${GIT_EXECUTABLE}" apply --directory=${ALLEGREXRECOMP_REL_DIR} -p3 --whitespace=nowarn "${patch}"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         RESULT_VARIABLE patch_res
         OUTPUT_VARIABLE patch_out
         ERROR_VARIABLE patch_err

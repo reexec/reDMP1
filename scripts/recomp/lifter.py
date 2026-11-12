@@ -16,6 +16,10 @@ def find_allegrexrecomp() -> Path:
             return p
 
     candidates = [
+        REPO_ROOT / "build" / "Release" / "allegrexrecomp.exe",
+        REPO_ROOT / "build" / "Debug" / "allegrexrecomp.exe",
+        REPO_ROOT / "build" / "allegrexrecomp.exe",
+        REPO_ROOT / "build" / "allegrexrecomp",
         REPO_ROOT / "build" / "win64-debug" / "Debug" / "allegrexrecomp.exe",
         REPO_ROOT / "build" / "win64-release" / "Release" / "allegrexrecomp.exe",
         REPO_ROOT / "build" / "win64-debug" / "allegrexrecomp.exe",
