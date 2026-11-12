@@ -88,6 +88,15 @@ target_link_libraries(redmp1 PRIVATE
 )
 repsp_apply_host_flags(redmp1)
 
+# Relocation verification tool (cross-check repsp vs allegrexrecomp)
+add_executable(reloc_check
+    tests/reloc_check.cpp
+)
+target_link_libraries(reloc_check PRIVATE
+    repsp::module
+)
+repsp_apply_host_flags(reloc_check)
+
 # 5. CTest and Smoke Tests
 enable_testing()
 
@@ -144,4 +153,22 @@ add_test(NAME app_smoke_unregistered
 # Smoke 6: Registered roms (if present in local tree)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/PARAM.SFO")
     add_test(NAME app_smoke_registered_roms COMMAND $<TARGET_FILE:redmp1> "${CMAKE_CURRENT_SOURCE_DIR}/roms" --variants "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/variants.json")
+endif()
+
+# Relocation cross-check (runs only when roms exist)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/SYSDIR/BOOT.BIN")
+    add_test(NAME reloc_check_relocate
+        COMMAND $<TARGET_FILE:allegrexrecomp> relocate
+                "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/SYSDIR/BOOT.BIN"
+                0x08804000
+                "${CMAKE_CURRENT_BINARY_DIR}/boot_reloc_allegrex.bin"
+    )
+    add_test(NAME reloc_check
+        COMMAND $<TARGET_FILE:reloc_check>
+                "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/SYSDIR/BOOT.BIN"
+                "${CMAKE_CURRENT_BINARY_DIR}/boot_reloc_allegrex.bin"
+                0x08804000
+    )
+    set_tests_properties(reloc_check_relocate PROPERTIES FIXTURES_SETUP reloc_fixture)
+    set_tests_properties(reloc_check PROPERTIES FIXTURES_REQUIRED reloc_fixture)
 endif()
