@@ -21,14 +21,38 @@ set(REPSP_BUILD_PROBES ON CACHE BOOL "Build repsp verification probes")
 
 add_subdirectory("${REDMP1_REPSP_DIR}" repsp)
 
-# 2. Host tool: allegrexrecomp (from third_party/psprecomp without psprecomp runtime target)
-set(ALLEGREXRECOMP_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/psprecomp/tools/allegrexrecomp")
+# 2. Host tool: allegrexrecomp (patched in binary dir, leaving submodule untouched)
+set(ALLEGREXRECOMP_ORIG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/psprecomp/tools/allegrexrecomp")
+set(ALLEGREXRECOMP_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/tools/allegrexrecomp")
+
+file(REMOVE_RECURSE "${ALLEGREXRECOMP_BUILD_DIR}")
+file(COPY "${ALLEGREXRECOMP_ORIG_DIR}/" DESTINATION "${ALLEGREXRECOMP_BUILD_DIR}")
+
+find_package(Git REQUIRED)
+set(ALLEGREXRECOMP_PATCHES
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/psprecomp/0001-relocate-prx-at-base.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/psprecomp/0002-seed-harvest-segment-bases.patch"
+)
+
+foreach(patch IN LISTS ALLEGREXRECOMP_PATCHES)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" apply -p3 --whitespace=nowarn "${patch}"
+        WORKING_DIRECTORY "${ALLEGREXRECOMP_BUILD_DIR}"
+        RESULT_VARIABLE patch_res
+        OUTPUT_VARIABLE patch_out
+        ERROR_VARIABLE patch_err
+    )
+    if(NOT patch_res EQUAL 0)
+        message(FATAL_ERROR "Failed to apply patch ${patch}:\n${patch_err}\n${patch_out}")
+    endif()
+endforeach()
+
 file(GLOB ALLEGREXRECOMP_SRCS CONFIGURE_DEPENDS
-    "${ALLEGREXRECOMP_SRC_DIR}/*.c"
-    "${ALLEGREXRECOMP_SRC_DIR}/crypto/*.c"
+    "${ALLEGREXRECOMP_BUILD_DIR}/*.c"
+    "${ALLEGREXRECOMP_BUILD_DIR}/crypto/*.c"
 )
 add_executable(allegrexrecomp ${ALLEGREXRECOMP_SRCS})
-target_include_directories(allegrexrecomp PRIVATE ${ALLEGREXRECOMP_SRC_DIR})
+target_include_directories(allegrexrecomp PRIVATE "${ALLEGREXRECOMP_BUILD_DIR}")
 if(MSVC)
     target_compile_options(allegrexrecomp PRIVATE /W3 /MP /utf-8)
     target_compile_definitions(allegrexrecomp PRIVATE _CRT_SECURE_NO_WARNINGS)
