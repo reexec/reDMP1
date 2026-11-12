@@ -33,12 +33,11 @@ set(ALLEGREXRECOMP_PATCHES
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/psprecomp/0001-relocate-prx-at-base.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/psprecomp/0002-seed-harvest-segment-bases.patch"
 )
-file(RELATIVE_PATH ALLEGREXRECOMP_REL_DIR "${CMAKE_CURRENT_SOURCE_DIR}" "${ALLEGREXRECOMP_BUILD_DIR}")
 
 foreach(patch IN LISTS ALLEGREXRECOMP_PATCHES)
     execute_process(
-        COMMAND "${GIT_EXECUTABLE}" apply --directory=${ALLEGREXRECOMP_REL_DIR} -p3 --whitespace=nowarn "${patch}"
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        COMMAND "${GIT_EXECUTABLE}" apply -p3 --ignore-space-change --ignore-whitespace --whitespace=nowarn "${patch}"
+        WORKING_DIRECTORY "${ALLEGREXRECOMP_BUILD_DIR}"
         RESULT_VARIABLE patch_res
         OUTPUT_VARIABLE patch_out
         ERROR_VARIABLE patch_err
@@ -101,11 +100,45 @@ target_link_libraries(redmp1_game PUBLIC
 )
 repsp_apply_host_flags(redmp1_game)
 
-# 4. App target: redmp1 (CLI executable: argument parsing, orchestration)
+# 5. Generated recompiled game code library (conditional on generated/ presence)
+file(GLOB REDMP1_RECOMP_SRCS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/generated/*.c"
+)
+
+if(REDMP1_RECOMP_SRCS)
+    add_library(redmp1_recomp STATIC
+        ${REDMP1_RECOMP_SRCS}
+    )
+    target_include_directories(redmp1_recomp PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/generated>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/psprecomp/include>
+    )
+    target_link_libraries(redmp1_recomp PUBLIC
+        redmp1_recomp_abi
+    )
+    if(MSVC)
+        target_compile_options(redmp1_recomp PRIVATE /W0 /MP /utf-8 /bigobj)
+        target_compile_definitions(redmp1_recomp PRIVATE _CRT_SECURE_NO_WARNINGS)
+    else()
+        target_compile_options(redmp1_recomp PRIVATE -w)
+    endif()
+
+    set(REDMP1_HAVE_RECOMP ON)
+else()
+    set(REDMP1_HAVE_RECOMP OFF)
+endif()
+
+# 6. App target: redmp1 (CLI executable: argument parsing, orchestration)
 add_executable(redmp1
     src/app/main.cpp
 )
 target_compile_definitions(redmp1 PRIVATE REDMP1_VERSION="${REDMP1_VERSION_STRING}")
+if(REDMP1_HAVE_RECOMP)
+    target_compile_definitions(redmp1 PRIVATE REDMP1_HAVE_RECOMP=1)
+    target_link_libraries(redmp1 PRIVATE redmp1_recomp redmp1_recomp_abi)
+else()
+    target_compile_definitions(redmp1 PRIVATE REDMP1_HAVE_RECOMP=0)
+endif()
 target_link_libraries(redmp1 PRIVATE
     redmp1_game
     repsp::runtime
@@ -208,4 +241,14 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/SYSDIR/BOOT.BIN")
     )
     set_tests_properties(reloc_check_relocate PROPERTIES FIXTURES_SETUP reloc_fixture)
     set_tests_properties(reloc_check PROPERTIES FIXTURES_REQUIRED reloc_fixture)
+endif()
+
+# Recompiled guest entry check (runs only when roms exist and recomp is built)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/SYSDIR/BOOT.BIN" AND REDMP1_HAVE_RECOMP)
+    add_test(NAME app_lift_check
+        COMMAND $<TARGET_FILE:redmp1>
+                "${CMAKE_CURRENT_SOURCE_DIR}/roms"
+                --variants "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/variants.json"
+                --lift-check
+    )
 endif()
