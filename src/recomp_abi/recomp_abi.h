@@ -17,11 +17,6 @@ void recomp_abi_reset(void);
 uint64_t recomp_abi_dispatch_misses(void);
 uint32_t recomp_abi_last_miss(void);
 
-// First-HLE stop mechanism for --lift-check
-void recomp_abi_set_stop_on_hle(int stop);
-uint32_t recomp_abi_get_first_hle_nid(void);
-void* recomp_abi_get_hle_jmp_buf(void);
-
 #ifdef __cplusplus
 }
 #endif

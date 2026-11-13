@@ -4,6 +4,7 @@
 
 #include <psprecomp/dispatch.h>
 #include <psprecomp/cpu.h>
+#include <repsp/platform/guarded_run.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -87,12 +88,15 @@ psp_fn_t psp_lookup(uint32_t addr) {
     return NULL;
 }
 
+static char g_miss_reason[128];
+
 static void default_miss(uint32_t addr) {
     g_misses++;
     g_last_miss = addr;
-    fprintf(stderr,
-            "[recomp_abi] DISPATCH MISS: indirect call to 0x%08X (not registered)\n",
-            addr);
+    snprintf(g_miss_reason, sizeof(g_miss_reason),
+             "Dispatch miss: indirect call to 0x%08X (not registered)", addr);
+    fprintf(stderr, "[recomp_abi] %s\n", g_miss_reason);
+    repsp_raise_stop(g_miss_reason);
 }
 
 void psp_dispatch(uint32_t addr) {

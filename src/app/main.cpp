@@ -14,8 +14,8 @@
 #include <repsp/platform/guarded_run.h>
 #include <repsp/recomp/guest_cpu.h>
 #include <repsp/runtime/guest_memory.h>
+#include <repsp/runtime/nid_registry.h>
 #include <repsp/runtime/prx_loader.h>
-#include <setjmp.h>
 
 extern "C" void psp_recomp_register(void);
 extern "C" uint64_t psp_dispatch_calls(void);
@@ -62,20 +62,23 @@ const char* LookupPublicNidName(const std::string& lib, uint32_t nid)
     return nullptr;
 }
 
-#if defined(_MSC_VER)
-#pragma warning(push)
-#pragma warning(disable: 4611) // interaction between '_setjmp' and C++ object destruction is non-portable
-#endif
-static void InvokeGuestWithSetjmp(const repsp_guest_cpu_ops* ops, uint32_t entry, jmp_buf* jmp)
+uint32_t ParseStoppedNidFromReason(const std::string& reason)
 {
-    if (setjmp(*jmp) == 0)
+    const std::string prefix = "Unimplemented NID 0x";
+    auto pos = reason.find(prefix);
+    if (pos == std::string::npos)
     {
-        ops->call_guest(entry);
+        return 0;
+    }
+    try
+    {
+        return static_cast<uint32_t>(std::stoul(reason.substr(pos + prefix.size()), nullptr, 16));
+    }
+    catch (...)
+    {
+        return 0;
     }
 }
-#if defined(_MSC_VER)
-#pragma warning(pop)
-#endif
 
 int RunLiftCheck(const std::filesystem::path& game_dir, const redmp1::IdentifyResult& idResult)
 {
@@ -135,26 +138,34 @@ int RunLiftCheck(const std::filesystem::path& game_dir, const redmp1::IdentifyRe
     ops->set_gpr(PSP_REG_A1, 0);
     ops->set_gpr(PSP_REG_RA, 0);
 
-    // Setup stop on first HLE call
-    recomp_abi_set_stop_on_hle(1);
-    jmp_buf* jmp = static_cast<jmp_buf*>(recomp_abi_get_hle_jmp_buf());
+    // Setup stop on first unimplemented HLE call via repsp NidRegistry
+    repsp::runtime::GetNidRegistry().SetStopOnUnimplemented(true);
 
     std::cout << "[lift-check] Running guest code in GuardedRun from entry 0x" << std::hex << loaded->entry << std::dec << "...\n";
 
     auto guard_res = repsp::platform::GuardedRun([&]() {
-        InvokeGuestWithSetjmp(ops, loaded->entry, jmp);
+        ops->call_guest(loaded->entry);
     });
 
-    if (!guard_res.succeeded && guard_res.native_exception_code != 0)
+    repsp::runtime::GetNidRegistry().SetStopOnUnimplemented(false);
+
+    if (!guard_res.stopped)
     {
-        std::cerr << "[lift-check] Error: guest execution faulted: " << guard_res.description << "\n";
+        if (!guard_res.succeeded)
+        {
+            std::cerr << "[lift-check] Error: guest execution faulted: " << guard_res.description << "\n";
+        }
+        else
+        {
+            std::cerr << "[lift-check] Warning: guest returned without making any firmware calls.\n";
+        }
         return 1;
     }
 
-    uint32_t first_nid = recomp_abi_get_first_hle_nid();
+    uint32_t first_nid = ParseStoppedNidFromReason(guard_res.stop_reason);
     if (first_nid == 0)
     {
-        std::cerr << "[lift-check] Warning: guest returned without making any firmware calls.\n";
+        std::cerr << "[lift-check] Error: guest stopped unexpectedly: " << guard_res.stop_reason << "\n";
         return 1;
     }
 

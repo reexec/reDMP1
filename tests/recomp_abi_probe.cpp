@@ -13,6 +13,7 @@
 #include <psprecomp/mem.h>
 #include <psprecomp/recomp_rt.h>
 #include <psprecomp/vfpu.h>
+#include <repsp/platform/guarded_run.h>
 #include <repsp/recomp/guest_cpu.h>
 #include <repsp/runtime/guest_memory.h>
 #include <repsp/runtime/nid_registry.h>
@@ -86,11 +87,26 @@ int main(void)
     ops->call_guest(0x08804000);
     CHECK(g_dummy_calls == 1);
 
-    // 6. Dispatch miss handling
+    // 6. Dispatch miss & psp_unimplemented stop handling via repsp_raise_stop
     uint64_t missesBefore = recomp_abi_dispatch_misses();
-    psp_dispatch(0x08809990); // unmapped target
+    auto missRes = repsp::platform::GuardedRun([]() {
+        psp_dispatch(0x08809990); // unmapped target
+    });
+    CHECK(!missRes.succeeded);
+    CHECK(missRes.stopped);
+    CHECK(missRes.stop_reason.find("08809990") != std::string::npos);
     CHECK(recomp_abi_dispatch_misses() == missesBefore + 1);
     CHECK(recomp_abi_last_miss() == 0x08809990);
+
+    uint64_t unimplBefore = psp_unimplemented_total();
+    auto unimplRes = repsp::platform::GuardedRun([]() {
+        psp_unimplemented(0x08804444, "test_insn");
+    });
+    CHECK(!unimplRes.succeeded);
+    CHECK(unimplRes.stopped);
+    CHECK(unimplRes.stop_reason.find("08804444") != std::string::npos);
+    CHECK(unimplRes.stop_reason.find("test_insn") != std::string::npos);
+    CHECK(psp_unimplemented_total() == unimplBefore + 1);
 
     // 7. HLE calls into repsp NID registry
     bool nidInvoked = false;
