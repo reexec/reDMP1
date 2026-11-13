@@ -1,5 +1,5 @@
 /* Derived from psprecomp commit 5ca18fa (src/vfpu.c) under MIT license. */
-/* psprecomp ??the VFPU. See include/psprecomp/vfpu.h. */
+/* psprecomp — the VFPU. See include/psprecomp/vfpu.h. */
 
 #include "psprecomp/vfpu.h"
 #include "psprecomp/recomp_rt.h"
