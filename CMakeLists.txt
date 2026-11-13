@@ -21,14 +21,38 @@ set(REPSP_BUILD_PROBES ON CACHE BOOL "Build repsp verification probes")
 
 add_subdirectory("${REDMP1_REPSP_DIR}" repsp)
 
-# 2. Host tool: allegrexrecomp (from third_party/psprecomp without psprecomp runtime target)
-set(ALLEGREXRECOMP_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/psprecomp/tools/allegrexrecomp")
+# 2. Host tool: allegrexrecomp (patched in binary dir, leaving submodule untouched)
+set(ALLEGREXRECOMP_ORIG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/psprecomp/tools/allegrexrecomp")
+set(ALLEGREXRECOMP_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/tools/allegrexrecomp")
+
+file(REMOVE_RECURSE "${ALLEGREXRECOMP_BUILD_DIR}")
+file(COPY "${ALLEGREXRECOMP_ORIG_DIR}/" DESTINATION "${ALLEGREXRECOMP_BUILD_DIR}")
+
+find_package(Git REQUIRED)
+set(ALLEGREXRECOMP_PATCHES
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/psprecomp/0001-relocate-prx-at-base.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/psprecomp/0002-seed-harvest-segment-bases.patch"
+)
+
+foreach(patch IN LISTS ALLEGREXRECOMP_PATCHES)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" --git-dir=/dev/null apply -p3 --ignore-space-change --ignore-whitespace --whitespace=nowarn "${patch}"
+        WORKING_DIRECTORY "${ALLEGREXRECOMP_BUILD_DIR}"
+        RESULT_VARIABLE patch_res
+        OUTPUT_VARIABLE patch_out
+        ERROR_VARIABLE patch_err
+    )
+    if(NOT patch_res EQUAL 0)
+        message(FATAL_ERROR "Failed to apply patch ${patch}:\n${patch_err}\n${patch_out}")
+    endif()
+endforeach()
+
 file(GLOB ALLEGREXRECOMP_SRCS CONFIGURE_DEPENDS
-    "${ALLEGREXRECOMP_SRC_DIR}/*.c"
-    "${ALLEGREXRECOMP_SRC_DIR}/crypto/*.c"
+    "${ALLEGREXRECOMP_BUILD_DIR}/*.c"
+    "${ALLEGREXRECOMP_BUILD_DIR}/crypto/*.c"
 )
 add_executable(allegrexrecomp ${ALLEGREXRECOMP_SRCS})
-target_include_directories(allegrexrecomp PRIVATE ${ALLEGREXRECOMP_SRC_DIR})
+target_include_directories(allegrexrecomp PRIVATE "${ALLEGREXRECOMP_BUILD_DIR}")
 if(MSVC)
     target_compile_options(allegrexrecomp PRIVATE /W3 /MP /utf-8)
     target_compile_definitions(allegrexrecomp PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -37,7 +61,32 @@ else()
     target_link_libraries(allegrexrecomp PRIVATE m)
 endif()
 
-# 3. Layer target: redmp1_game (title layer: profile, variant identification)
+# 3. psprecomp ABI adapter target
+add_library(redmp1_recomp_abi STATIC
+    src/recomp_abi/cpu.c
+    src/recomp_abi/mem.c
+    src/recomp_abi/dispatch.c
+    src/recomp_abi/trap.c
+    src/recomp_abi/vfpu.c
+)
+target_include_directories(redmp1_recomp_abi PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/recomp_abi>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/psprecomp/include>
+)
+target_link_libraries(redmp1_recomp_abi PUBLIC
+    repsp::recomp
+    repsp::module
+    repsp::runtime
+)
+if(MSVC)
+    target_compile_options(redmp1_recomp_abi PRIVATE /W3 /MP /utf-8)
+    target_compile_definitions(redmp1_recomp_abi PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(redmp1_recomp_abi PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    target_link_libraries(redmp1_recomp_abi PRIVATE m)
+endif()
+
+# 4. Layer target: redmp1_game (title layer: profile, variant identification)
 add_library(redmp1_game STATIC
     src/game/dmp1/dmp1_profile.cpp
 )
@@ -51,17 +100,72 @@ target_link_libraries(redmp1_game PUBLIC
 )
 repsp_apply_host_flags(redmp1_game)
 
-# 4. App target: redmp1 (CLI executable: argument parsing, orchestration)
+# 5. Generated recompiled game code library (conditional on generated/ presence)
+file(GLOB REDMP1_RECOMP_SRCS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/generated/*.c"
+)
+
+if(REDMP1_RECOMP_SRCS)
+    add_library(redmp1_recomp STATIC
+        ${REDMP1_RECOMP_SRCS}
+    )
+    target_include_directories(redmp1_recomp PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/generated>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/psprecomp/include>
+    )
+    target_link_libraries(redmp1_recomp PUBLIC
+        redmp1_recomp_abi
+    )
+    if(MSVC)
+        target_compile_options(redmp1_recomp PRIVATE /W0 /MP /utf-8 /bigobj)
+        target_compile_definitions(redmp1_recomp PRIVATE _CRT_SECURE_NO_WARNINGS)
+    else()
+        target_compile_options(redmp1_recomp PRIVATE -w)
+    endif()
+
+    set(REDMP1_HAVE_RECOMP ON)
+else()
+    set(REDMP1_HAVE_RECOMP OFF)
+endif()
+
+# 6. App target: redmp1 (CLI executable: argument parsing, orchestration)
 add_executable(redmp1
     src/app/main.cpp
 )
 target_compile_definitions(redmp1 PRIVATE REDMP1_VERSION="${REDMP1_VERSION_STRING}")
+if(REDMP1_HAVE_RECOMP)
+    target_compile_definitions(redmp1 PRIVATE REDMP1_HAVE_RECOMP=1)
+    target_link_libraries(redmp1 PRIVATE redmp1_recomp redmp1_recomp_abi)
+else()
+    target_compile_definitions(redmp1 PRIVATE REDMP1_HAVE_RECOMP=0)
+endif()
 target_link_libraries(redmp1 PRIVATE
     redmp1_game
     repsp::runtime
     repsp::platform
 )
 repsp_apply_host_flags(redmp1)
+
+# Relocation verification tool (cross-check repsp vs allegrexrecomp)
+add_executable(reloc_check
+    tests/reloc_check.cpp
+)
+target_link_libraries(reloc_check PRIVATE
+    repsp::module
+)
+repsp_apply_host_flags(reloc_check)
+
+# recomp_abi_probe (CI test, runs without game data)
+add_executable(recomp_abi_probe
+    tests/recomp_abi_probe.cpp
+)
+target_link_libraries(recomp_abi_probe PRIVATE
+    redmp1_recomp_abi
+    repsp::runtime
+    repsp::platform
+)
+repsp_apply_host_flags(recomp_abi_probe)
+add_test(NAME recomp_abi_probe COMMAND $<TARGET_FILE:recomp_abi_probe>)
 
 # 5. CTest and Smoke Tests
 enable_testing()
@@ -119,4 +223,40 @@ add_test(NAME app_smoke_unregistered
 # Smoke 6: Registered roms (if present in local tree)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/PARAM.SFO")
     add_test(NAME app_smoke_registered_roms COMMAND $<TARGET_FILE:redmp1> "${CMAKE_CURRENT_SOURCE_DIR}/roms" --variants "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/variants.json")
+endif()
+
+# Relocation cross-check (runs only when roms exist)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/SYSDIR/BOOT.BIN")
+    add_test(NAME reloc_check_relocate
+        COMMAND $<TARGET_FILE:allegrexrecomp> relocate
+                "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/SYSDIR/BOOT.BIN"
+                0x08804000
+                "${CMAKE_CURRENT_BINARY_DIR}/boot_reloc_allegrex.bin"
+    )
+    add_test(NAME reloc_check
+        COMMAND $<TARGET_FILE:reloc_check>
+                "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/SYSDIR/BOOT.BIN"
+                "${CMAKE_CURRENT_BINARY_DIR}/boot_reloc_allegrex.bin"
+                0x08804000
+    )
+    set_tests_properties(reloc_check_relocate PROPERTIES FIXTURES_SETUP reloc_fixture)
+    set_tests_properties(reloc_check PROPERTIES FIXTURES_REQUIRED reloc_fixture)
+
+    add_test(NAME lift_invariance
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_lift_invariance.py"
+                --allegrexrecomp $<TARGET_FILE:allegrexrecomp>
+                --binary "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/SYSDIR/BOOT.BIN"
+                --base 0x08804000
+    )
+endif()
+
+# Recompiled guest entry check (runs only when roms exist and recomp is built)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/SYSDIR/BOOT.BIN" AND REDMP1_HAVE_RECOMP)
+    add_test(NAME app_lift_check
+        COMMAND $<TARGET_FILE:redmp1>
+                "${CMAKE_CURRENT_SOURCE_DIR}/roms"
+                --variants "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/variants.json"
+                --lift-check
+    )
 endif()

@@ -4,11 +4,11 @@ reDMP1 incorporates or links the following third-party open-source projects:
 
 ## 1. psprecomp
 
-* Location: `third_party/psprecomp`
+* Location: `third_party/psprecomp` (submodule) and `src/recomp_abi/` (carried code)
 * Upstream: https://github.com/sp00nznet/psprecomp
 * Pin: `5ca18fa`
 * License: MIT License (Copyright (c) 2024 sp00nznet)
-* Usage: Static recompilation toolkit (allegrexrecomp host CLI tool and ABI headers).
+* Usage: Static recompilation toolkit (allegrexrecomp host CLI tool and ABI headers); portions of `src/vfpu.c` and `src/dispatch.c` carried into `src/recomp_abi/`.
 
 ## 2. repsp
 
