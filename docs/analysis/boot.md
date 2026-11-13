@@ -24,7 +24,7 @@ sequenceDiagram
     UM->>K: sceKernelCreateCallback + sceKernelRegisterExitCallback
     UM->>K: sceKernelSetGPO(0xFF)
     UM->>K: sceKernelCreateSema(init=1, max=1)
-    UM->>K: sceGe_user:0xA4FC06A4 (sceGeEdramGetAddr) -> 비커널 정지 (class a)
+    UM->>K: sceGe_user:0xA4FC06A4 (sceGeSetCallback) -> 비커널 정지 (class a)
 ```
 
 ---
@@ -84,7 +84,7 @@ sequenceDiagram
 | `LoadExecForUser` | `sceKernelRegisterExitCallback` | 1 |
 | `UtilsForUser` | `sceKernelSetGPO` | 1 |
 
-* **확인됨**: 첫 비커널 정지 지점은 `sceGe_user`의 NID `0xA4FC06A4`(`sceGeEdramGetAddr`, **추정**: 공개 PSPSDK NID 이름)이다.
+* **확인됨**: 첫 비커널 정지 지점은 `sceGe_user`의 NID `0xA4FC06A4`(`sceGeSetCallback`)이다. 이름은 NID = SHA-1(이름)의 앞 4바이트로 **확인됨**(`sceGeEdramGetAddr`는 `0xE47E40E4`로 별개의 import다). 처음 기록에 적힌 `sceGeEdramGetAddr`는 잘못된 이름이었다.
 * **확인됨**: 3회 연속 실행에서 HLE 호출 순서, 호출 수, 정지 지점이 모두 동일했다.
 
 ---
@@ -109,5 +109,5 @@ This document records the initial boot behavior of `BOOT.BIN` observed up to the
 ## 3. HLE Call Summary & First Non-Kernel Stop (**Confirmed**)
 
 * Total HLE calls before stopping: `sceKernelCpuSuspendIntr` (86), `sceKernelCpuResumeIntr` (86), `sceKernelStdout` (7), `sceIoWrite` (7), `sceKernelCreateCallback` (2), `sceKernelCreateThread` (1), `sceKernelStartThread` (1), `sceKernelCreateSema` (1), `sceKernelAllocPartitionMemory` (1), `sceKernelGetBlockHeadAddr` (1), `scePowerRegisterCallback` (1), `sceKernelRegisterExitCallback` (1), `sceKernelSetGPO` (1).
-* **First non-kernel stop**: `sceGe_user` NID `0xA4FC06A4` (`sceGeEdramGetAddr`, **inferred** from public PSPSDK NID database).
+* **First non-kernel stop**: `sceGe_user` NID `0xA4FC06A4` (`sceGeSetCallback`, **confirmed**: NID = the first four bytes of SHA-1(name); `sceGeEdramGetAddr` is the separate import `0xE47E40E4`). The name first recorded, `sceGeEdramGetAddr`, was wrong.
 * **Determinism**: 3 consecutive runs produced identical HLE call sequences, counts, and stop reports.
