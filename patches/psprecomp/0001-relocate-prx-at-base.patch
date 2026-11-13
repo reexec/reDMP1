@@ -1,22 +1,23 @@
-From 0463f6e622a9dd441be094140d7b05ebfe1cedf3 Mon Sep 17 00:00:00 2001
+From e039f3f79b965392d36e19d0c9352c4a5f8a42ec Mon Sep 17 00:00:00 2001
 From: Kitae Noh <nworkers@gmail.com>
-Date: Fri, 13 Nov 2026 01:10:30 +0900
-Subject: [PATCH] Add --base option to emit/funcs and relocate subcommand
+Date: Fri, 13 Nov 2026 03:02:24 +0900
+Subject: [PATCH 1/2] Add --base option to emit/funcs and relocate subcommand
 
 ---
- tools/allegrexrecomp/container.c | 112 ++++++++++++
+ tools/allegrexrecomp/container.c | 112 +++++++++++
  tools/allegrexrecomp/container.h |   7 +
- tools/allegrexrecomp/main.c      | 286 +++++++++++++++++++++++++++----
- 3 files changed, 371 insertions(+), 34 deletions(-)
+ tools/allegrexrecomp/main.c      | 322 ++++++++++++++++++++++++++-----
+ 3 files changed, 389 insertions(+), 52 deletions(-)
 
 diff --git a/tools/allegrexrecomp/container.c b/tools/allegrexrecomp/container.c
-index b177c50..ebd3373 100644
+index b177c50..55053a3 100644
 --- a/tools/allegrexrecomp/container.c
 +++ b/tools/allegrexrecomp/container.c
 @@ -646,3 +646,115 @@ int psp_collect_exports(const uint8_t *d, size_t len,
      }
      return found;
  }
++
 +
 +static void wr32(uint8_t *p, uint32_t v) {
 +    p[0] = (uint8_t)v;
@@ -128,7 +129,6 @@ index b177c50..ebd3373 100644
 +    *out_size = image_size;
 +    return 0;
 +}
-+
 diff --git a/tools/allegrexrecomp/container.h b/tools/allegrexrecomp/container.h
 index af8bc51..d78cc6c 100644
 --- a/tools/allegrexrecomp/container.h
@@ -148,10 +148,24 @@ index af8bc51..d78cc6c 100644
   * The PRX descriptor: where the export and import tables live, and the $gp
   * value the module's code assumes. Exported function addresses are the single
 diff --git a/tools/allegrexrecomp/main.c b/tools/allegrexrecomp/main.c
-index cbb67bf..27c7b14 100644
+index cbb67bf..1a293db 100644
 --- a/tools/allegrexrecomp/main.c
 +++ b/tools/allegrexrecomp/main.c
-@@ -32,9 +32,10 @@ static int usage(void) {
+@@ -1,4 +1,4 @@
+-/* allegrexrecomp — command-line front end.
++/* allegrexrecomp ??command-line front end.
+  *
+  *   info    <file>                    identify and describe any layer of the stack
+  *   ls      <file.iso>                list a disc image
+@@ -25,16 +25,17 @@
+ 
+ static int usage(void) {
+     fprintf(stderr,
+-        "allegrexrecomp — Allegrex static-recompilation toolkit\n"
++        "allegrexrecomp ??Allegrex static-recompilation toolkit\n"
+         "\n"
+         "  allegrexrecomp info    <file>\n"
+         "  allegrexrecomp ls      <file.iso>\n"
          "  allegrexrecomp extract <file.iso> <substring> <outdir>\n"
          "  allegrexrecomp dis     <file> [start-addr] [count]\n"
          "  allegrexrecomp cover   <file>\n"
@@ -164,7 +178,12 @@ index cbb67bf..27c7b14 100644
          "  allegrexrecomp decrypt <file> [--keys <path>]\n"
          "  allegrexrecomp kirk1   <file> [out] [--keys <path>]\n"
          "\n"
-@@ -46,6 +47,15 @@ static int usage(void) {
+@@ -42,10 +43,19 @@ static int usage(void) {
+         "ELF/PRX modules, and raw binaries.\n"
+         "\n"
+         "Key material is never bundled. Supply it via --keys, $PSPRECOMP_KEYS,\n"
+-        "or ./keys/psp_keys.txt — see docs/DECRYPT.md.\n");
++        "or ./keys/psp_keys.txt ??see docs/DECRYPT.md.\n");
      return 2;
  }
  
@@ -180,7 +199,64 @@ index cbb67bf..27c7b14 100644
  /* ---- info ---------------------------------------------------------------- */
  
  static void print_iso_info(const char *path, FILE *f) {
-@@ -458,9 +468,13 @@ static int cmd_cover(const char *path) {
+@@ -117,7 +127,7 @@ static void print_pbp_info(const uint8_t *d, size_t len) {
+     }
+ 
+     /* Recurse one level into the executable payload. DATA.PSP is where the
+-     * actual module lives, and its header names the module and the key tag —
++     * actual module lives, and its header names the module and the key tag ??
+      * the two things you need before you can decrypt or decode it. */
+     if (pbp.size[6] && pbp.offset[6] + pbp.size[6] <= len) {
+         const uint8_t *inner = d + pbp.offset[6];
+@@ -149,7 +159,7 @@ static void print_psp_info(const uint8_t *d, size_t len) {
+     printf("  tag           0x%08X\n", h.tag);
+     for (int i = 0; i < h.nsegments && i < 4; i++)
+         printf("  segment %d     addr 0x%08X size %u\n", i, h.seg_address[i], h.seg_size[i]);
+-    printf("\n  This module is encrypted. Decryption is phase 2 — see docs/DECRYPT.md.\n");
++    printf("\n  This module is encrypted. Decryption is phase 2 ??see docs/DECRYPT.md.\n");
+ }
+ 
+ static void print_elf_info(const uint8_t *d, size_t len) {
+@@ -242,7 +252,7 @@ static int cmd_info(const char *path) {
+         }
+         break;
+     default:
+-        printf("format:   unrecognised — treating as raw Allegrex code\n");
++        printf("format:   unrecognised ??treating as raw Allegrex code\n");
+         break;
+     }
+ 
+@@ -328,7 +338,7 @@ static int find_code(const psp_blob *b, const uint8_t **code, uint32_t *size, ui
+     }
+     if (fmt == FMT_PSP || fmt == FMT_SCE) {
+         fprintf(stderr,
+-            "this module is encrypted (%s) — decryption is phase 2, see docs/DECRYPT.md\n",
++            "this module is encrypted (%s) ??decryption is phase 2, see docs/DECRYPT.md\n",
+             psp_format_name(fmt));
+         return -1;
+     }
+@@ -347,7 +357,7 @@ static int find_code(const psp_blob *b, const uint8_t **code, uint32_t *size, ui
+                     return 0;
+                 }
+             }
+-            fprintf(stderr, "PBP DATA.PSP is %s — cannot decode yet\n",
++            fprintf(stderr, "PBP DATA.PSP is %s ??cannot decode yet\n",
+                     psp_format_name(ifmt));
+             return -1;
+         }
+@@ -429,9 +439,9 @@ static int cmd_cover(const char *path) {
+     if (!total) { psp_blob_free(&b); return 0; }
+ 
+     printf("decoded:  %llu (%.2f%%)\n", (unsigned long long)ok, 100.0 * (double)ok / (double)total);
+-    printf("vfpu:     %llu (%.2f%%)  — recognised as VFPU, not yet named\n",
++    printf("vfpu:     %llu (%.2f%%)  ??recognised as VFPU, not yet named\n",
+            (unsigned long long)vfpu, 100.0 * (double)vfpu / (double)total);
+-    printf("unknown:  %llu (%.2f%%)  — decoder gaps, or data misread as code\n",
++    printf("unknown:  %llu (%.2f%%)  ??decoder gaps, or data misread as code\n",
+            (unsigned long long)bad, 100.0 * (double)bad / (double)total);
+ 
+     /* Top opcodes: a sanity check that we are looking at code at all. Real
+@@ -458,28 +468,56 @@ static int cmd_cover(const char *path) {
  /* Load a decrypted module and run discovery over it. On success the caller
   * owns both `b` (psp_blob_free) and `an` (a_analysis_free). Shared by `funcs`
   * and `emit`, which differ only in what they do with the result. */
@@ -195,13 +271,22 @@ index cbb67bf..27c7b14 100644
      if (psp_blob_read(path, b) != 0) { fprintf(stderr, "cannot read %s\n", path); return -1; }
  
      if (psp_sniff(b->data, b->size < 16 ? b->size : 16) != FMT_ELF ||
-@@ -471,15 +485,39 @@ static int load_and_discover(const char *path, psp_blob *b, elf_info *e,
+         elf_parse(b->data, b->size, e) != 0 || !e->text_size) {
+         fprintf(stderr, "%s is not a decrypted ELF/PRX with code in it\n", path);
+-        fprintf(stderr, "(encrypted modules must be decrypted first — see docs/DECRYPT.md)\n");
++        fprintf(stderr, "(encrypted modules must be decrypted first ??see docs/DECRYPT.md)\n");
+         psp_blob_free(b);
          return -1;
      }
  
+-    memset(an, 0, sizeof *an);
+-    /* Walk the whole loaded image, not just .text: a module can place
+-     * executable code outside it (C++ static initialisers, notably), and
+-     * restricting the extent to .text makes that code invisible. The linear
+-     * jal harvest stays confined to .text via scan_base/scan_size. */
 +    uint8_t *reloc_buf = NULL;
 +    size_t reloc_sz = 0;
-+    if (base != 0 && e->nsegments) {
+     if (e->nsegments) {
 +        if (prx_relocate(b->data, b->size, e, base, &reloc_buf, &reloc_sz) != 0) {
 +            fprintf(stderr, "failed to relocate PRX %s at 0x%08X\n", path, base);
 +            psp_blob_free(b);
@@ -217,12 +302,7 @@ index cbb67bf..27c7b14 100644
 +        if (out_reloc_sz)  *out_reloc_sz = reloc_sz;
 +    }
 +
-     memset(an, 0, sizeof *an);
--    /* Walk the whole loaded image, not just .text: a module can place
--     * executable code outside it (C++ static initialisers, notably), and
--     * restricting the extent to .text makes that code invisible. The linear
--     * jal harvest stays confined to .text via scan_base/scan_size. */
--    if (e->nsegments) {
++    memset(an, 0, sizeof *an);
 +    if (reloc_buf) {
 +        an->code = reloc_buf + (e->seg[0].addr - base);
 +        an->base = e->seg[0].addr;
@@ -240,7 +320,7 @@ index cbb67bf..27c7b14 100644
      } else {
          an->code = b->data + e->text_offset;
          an->base = e->text_addr;
-@@ -490,11 +528,119 @@ static int load_and_discover(const char *path, psp_blob *b, elf_info *e,
+@@ -490,19 +528,127 @@ static int load_and_discover(const char *path, psp_blob *b, elf_info *e,
      an->stub_addr = e->stub_addr;
      an->stub_size = e->stub_size;
      an->scan_calls = 1;
@@ -365,6 +445,25 @@ index cbb67bf..27c7b14 100644
      }
  
      /* Seeds come from three places, in increasing order of how much they find:
+      *
+      *   1. the module entry point
+-     *   2. the export table — a library entry nothing internal calls is
++     *   2. the export table ??a library entry nothing internal calls is
+      *      unreachable from the entry point alone
+-     *   3. R_MIPS_32 relocations pointing into .text — the stored function
++     *   3. R_MIPS_32 relocations pointing into .text ??the stored function
+      *      pointers behind thread entries, callbacks and vtables, which no
+      *      control-flow scan can see
+      *
+@@ -531,7 +677,7 @@ static int load_and_discover(const char *path, psp_blob *b, elf_info *e,
+     if (nptr > cap - nseeds) nptr = cap - nseeds;
+     nseeds += nptr;
+ 
+-    /* A statically linked module (ET_EXEC) has empty relocation sections — its
++    /* A statically linked module (ET_EXEC) has empty relocation sections ??its
+      * addresses are absolute, so there is nothing for the loader to patch and
+      * nothing to enumerate. Fall back to recognising pointers by shape, which
+      * is a heuristic rather than a fact and is only used when enumeration
 @@ -572,13 +718,15 @@ static int load_and_discover(const char *path, psp_blob *b, elf_info *e,
      return 0;
  }
@@ -461,6 +560,15 @@ index cbb67bf..27c7b14 100644
              else nimp = 0;
          }
      }
+@@ -746,7 +902,7 @@ static int cmd_emit(const char *path, const char *outdir, const char *prefix) {
+     if (rc == 0) {
+         /* The instructions the emitter could not translate are the honest
+          * measure of how far the output is from running. They are traps, not
+-         * silence, so they will announce themselves — but knowing the count
++         * silence, so they will announce themselves ??but knowing the count
+          * up front is better than discovering it one crash at a time. */
+         printf("\n%llu of %llu instructions are VFPU and emit as traps (%.2f%%).\n",
+                (unsigned long long)an.vfpu, (unsigned long long)an.insns,
 @@ -754,15 +910,12 @@ static int cmd_emit(const char *path, const char *outdir, const char *prefix) {
      }
  
@@ -536,6 +644,33 @@ index cbb67bf..27c7b14 100644
  /* ---- decryption ---------------------------------------------------------- */
  
  static uint32_t rd32le(const uint8_t *p) {
+@@ -820,7 +1015,7 @@ static const uint8_t *find_psp_module(const uint8_t *d, size_t len, size_t *out_
+ 
+ /* Does a 0x30-byte block look like KIRK CMD1 metadata?
+  *
+- * The metadata block is highly constrained — a mode of exactly 1, a signature
++ * The metadata block is highly constrained ??a mode of exactly 1, a signature
+  * flag of 0 or 1, a retail/devkit word that is 0 or all-ones, and 0x18 bytes
+  * of mandatory zeros. That is roughly 100 bits of structure, so a false
+  * positive in a few hundred bytes of header is very unlikely.
+@@ -828,7 +1023,7 @@ static const uint8_t *find_psp_module(const uint8_t *d, size_t len, size_t *out_
+  * This exists because the transform from a ~PSP header to a CMD1 header is the
+  * one part of the chain we do not yet have a trustworthy description of. Rather
+  * than guess an offset and silently decrypt garbage, we look for the block and
+- * report where it actually is — measuring the layout instead of assuming it.
++ * report where it actually is ??measuring the layout instead of assuming it.
+  */
+ static int looks_like_cmd1_meta(const uint8_t *m, size_t avail, uint32_t file_size) {
+     if (avail < KIRK1_META_SIZE) return 0;
+@@ -923,7 +1118,7 @@ static int cmd_decrypt(const char *path, const char *keypath) {
+     return 0;
+ }
+ 
+-/* Decrypt a raw KIRK CMD1 blob. Complete and tested — the layer above it is
++/* Decrypt a raw KIRK CMD1 blob. Complete and tested ??the layer above it is
+  * what is still missing. */
+ static int cmd_kirk1(const char *path, const char *outpath, const char *keypath) {
+     psp_blob b;
 @@ -992,15 +1187,38 @@ int main(int argc, char **argv) {
      if (!strcmp(cmd, "info"))    return cmd_info(argv[2]);
      if (!strcmp(cmd, "ls"))      return cmd_ls(argv[2]);

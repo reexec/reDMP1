@@ -1,14 +1,29 @@
-From b13bce444172c19f28b75192ecebdec646ba3f06 Mon Sep 17 00:00:00 2001
+From 8fd963a9efc416a066d78865c672612aad697af0 Mon Sep 17 00:00:00 2001
 From: Kitae Noh <nworkers@gmail.com>
-Date: Fri, 13 Nov 2026 01:11:45 +0900
-Subject: [PATCH] Handle ofsbase and addrbase segments in seed harvesting
+Date: Fri, 13 Nov 2026 03:05:18 +0900
+Subject: [PATCH 2/2] Ensure lift invariance across base addresses on PRX
+ modules
 
 ---
+ tools/allegrexrecomp/analyze.c   |  2 +-
  tools/allegrexrecomp/container.c | 24 +++++++++++++++++-------
- 1 file changed, 17 insertions(+), 7 deletions(-)
+ 2 files changed, 18 insertions(+), 8 deletions(-)
 
+diff --git a/tools/allegrexrecomp/analyze.c b/tools/allegrexrecomp/analyze.c
+index cdee5d7..7bbcf4c 100644
+--- a/tools/allegrexrecomp/analyze.c
++++ b/tools/allegrexrecomp/analyze.c
+@@ -533,7 +533,7 @@ int a_discover(a_analysis *an, const uint32_t *seeds, int nseeds) {
+      * data table. Any lui whose paired addiu/ori yields an address that is
+      * in range and decodes as valid code is promoted to an entry, same
+      * over-split-is-safe reasoning as everywhere else in this file. */
+-    if (an->scan_calls) {
++    if (an->scan_calls && !an->image) { /* Non-relocated raw binary fallback */
+         uint32_t sbase = an->scan_size ? an->scan_base : an->base;
+         uint32_t ssize = an->scan_size ? an->scan_size : an->size;
+         for (uint32_t off = 0; off + 4 <= ssize; off += 4) {
 diff --git a/tools/allegrexrecomp/container.c b/tools/allegrexrecomp/container.c
-index ebd3373..4438cba 100644
+index 55053a3..bd24878 100644
 --- a/tools/allegrexrecomp/container.c
 +++ b/tools/allegrexrecomp/container.c
 @@ -539,6 +539,13 @@ int psp_collect_pointer_seeds(const uint8_t *d, size_t len, const elf_info *e,

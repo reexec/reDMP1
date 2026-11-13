@@ -36,7 +36,7 @@ set(ALLEGREXRECOMP_PATCHES
 
 foreach(patch IN LISTS ALLEGREXRECOMP_PATCHES)
     execute_process(
-        COMMAND "${GIT_EXECUTABLE}" apply -p3 --ignore-space-change --ignore-whitespace --whitespace=nowarn "${patch}"
+        COMMAND "${GIT_EXECUTABLE}" --git-dir=/dev/null apply -p3 --ignore-space-change --ignore-whitespace --whitespace=nowarn "${patch}"
         WORKING_DIRECTORY "${ALLEGREXRECOMP_BUILD_DIR}"
         RESULT_VARIABLE patch_res
         OUTPUT_VARIABLE patch_out
@@ -241,6 +241,14 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/SYSDIR/BOOT.BIN")
     )
     set_tests_properties(reloc_check_relocate PROPERTIES FIXTURES_SETUP reloc_fixture)
     set_tests_properties(reloc_check PROPERTIES FIXTURES_REQUIRED reloc_fixture)
+
+    add_test(NAME lift_invariance
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_lift_invariance.py"
+                --allegrexrecomp $<TARGET_FILE:allegrexrecomp>
+                --binary "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/SYSDIR/BOOT.BIN"
+                --base 0x08804000
+    )
 endif()
 
 # Recompiled guest entry check (runs only when roms exist and recomp is built)

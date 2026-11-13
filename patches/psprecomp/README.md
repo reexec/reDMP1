@@ -17,18 +17,18 @@ This directory maintains local patches applied to `third_party/psprecomp` (targe
 1. **`0001-relocate-prx-at-base.patch`**
    - **설명 / Description**:
      - `allegrexrecomp funcs` 및 `emit`에 `--base <addr>` 옵션을 추가합니다.
-     - 지정된 기준 주소로 PRX(ELF32 e_type 0xFFA0)의 `PT_LOAD` 세그먼트 및 `SHT_PRXRELOC` 재배치를 적용하여 인메모리 레이아웃을 생성한 후 함수 발견 및 C 코드 생성을 수행합니다.
+     - 기준 주소가 0이든 지정된 주소든 PRX(`e_type 0xFFA0`)는 항상 `prx_relocate`를 통해 인메모리 재배치 이미지를 생성하고, 단일 경로로 시드 수집·함수 발견·C 코드 생성을 수행합니다.
      - 독립 서브커맨드 `allegrexrecomp relocate <file> <base> <out>`를 추가하여 재배치된 바이너리 바이트를 추출할 수 있게 합니다.
      - Adds the `--base <addr>` option to `allegrexrecomp funcs` and `emit`.
-     - Relocates PRX (`e_type 0xFFA0`) segments using `SHT_PRXRELOC` to the given base address in memory before running function discovery and code emission.
+     - Always relocates PRX (`e_type 0xFFA0`) segments via `prx_relocate` (even when `base == 0`, with `S = seg[addrbase].vaddr`) and uses a single unified path for seed collection, function discovery, and code emission.
      - Adds `allegrexrecomp relocate <file> <base> <out>` subcommand to output relocated binary bytes.
 
 2. **`0002-seed-harvest-segment-bases.patch`**
    - **설명 / Description**:
      - `container.c`의 `psp_collect_pointer_seeds`에서 `ofsbase` 및 `addrbase` 세그먼트 인덱스를 처리하도록 수정합니다.
-     - 기존 코드는 모든 재배치를 세그먼트 0 기준으로 계산하여 세그먼트 1(`addrbase == 1`)을 가리키는 포인터를 잘못된 주소로 해석하거나 누락하는 문제가 있었습니다.
+     - `analyze.c`에서 재배치 이미지(`an->image != NULL`)가 있는 PRX 분석 시 비재배치 즉시값(`lui+addiu`/`ori`) 선형 스캔을 건너뛰어, 기준 주소에 따라 상수 값이 우연히 코드 범위와 겹쳐 거짓 분할을 일으키는 문제를 방지하고 평행이동 불변성(lift invariance)을 보장합니다.
      - Fixes handling of `ofsbase` and `addrbase` segment indices in `psp_collect_pointer_seeds` (`container.c`).
-     - Previously, all relocations were assumed relative to segment 0, causing addresses referencing segment 1 (`addrbase == 1`) to be calculated incorrectly or missed.
+     - Skips the non-relocated `lui+addiu`/`ori` immediate scan in `analyze.c` when `an->image` is present on PRX modules, preventing un-relocated constants from colliding with `.text` bounds at base 0 and ensuring exact lift invariance across base addresses.
 
 ---
 
