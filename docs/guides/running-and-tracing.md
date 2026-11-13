@@ -1,0 +1,61 @@
+# 실행 및 HLE 추적 가이드
+
+이 문서는 사용자가 `redmp1`을 직접 실행해 커널·UMD HLE 부팅 상태와 NID 호출 추적을 확인하는 절차를 설명한다.
+
+* 관련 설계: [20261114-i005-boot.md](../design/20261114-i005-boot.md)
+* 관련 작업 로그: [20261114-i005-boot.md](../work-logs/20261114-i005-boot.md)
+
+---
+
+## 1. 기본 부팅 실행
+
+1. Win64 Release 빌드 후 게임 디렉터리(`roms/`)를 인자로 전달해 실행한다.
+   ```powershell
+   .\build\win64-release\Release\redmp1.exe roms --variants src\game\dmp1\recomp\variants.json
+   ```
+2. 종료 후 출력되는 `[boot] === BOOT STOP REPORT ===`와 종료 코드를 확인한다.
+   * **분류 (a) (종료 코드 `0`)**: 비커널 NID 미구현 지점 도달 또는 정상 종료(`sceKernelExitGame` 포함). 현재 기준은 `sceGe_user:0xA4FC06A4` 정지다.
+   * **분류 (b) (종료 코드 `10` 또는 `11`)**: 커널 NID 미구현 또는 예기치 않은 런타임/HLE 정지.
+   * **분류 (c) (종료 코드 `12`)**: CPU 폴트 또는 호스트 예외.
+
+---
+
+## 2. `REPSP_HLE_TRACE` 추적 실행
+
+환경 변수 `REPSP_HLE_TRACE=1`을 설정하면 게스트가 호출하는 모든 HLE 함수의 이름, 인자 4개(`$a0`–`$a3`), 반환값을 순서대로 출력한다. `REPSP_HLE_TRACE_LIMIT`으로 최대 출력 건수를 제한할 수 있다.
+
+```powershell
+$env:REPSP_HLE_TRACE = "1"
+.\build\win64-release\Release\redmp1.exe roms --variants src\game\dmp1\recomp\variants.json
+```
+
+실행 끝에는 항상 다음 요약이 함께 출력된다.
+
+* `HLE Call Count Summary`: 라이브러리·함수별 호출 횟수
+* `Guest Threads`: 생성된 게스트 스레드 상태(`module_start`, `user_main` 등)
+* `Open Files`: 현재 열려 있는 VFS 파일 목록
+* `User Partition Blocks`: 사용자 메모리 파티션 블록 현황
+
+---
+
+# Running and HLE Tracing Guide
+
+This guide describes how to run `redmp1` to inspect kernel/UMD HLE boot behavior and trace NID calls.
+
+* Related design: [20261114-i005-boot.md](../design/20261114-i005-boot.md)
+* Related work log: [20261114-i005-boot.md](../work-logs/20261114-i005-boot.md)
+
+## 1. Default Boot Execution
+
+```powershell
+.\build\win64-release\Release\redmp1.exe roms --variants src\game\dmp1\recomp\variants.json
+```
+
+Check `[boot] === BOOT STOP REPORT ===` and the exit code:
+* **Class (a) (`0`)**: Stopped at an unimplemented non-kernel NID (currently `sceGe_user:0xA4FC06A4`) or exited cleanly (`sceKernelExitGame`).
+* **Class (b) (`10` or `11`)**: Unimplemented kernel NID or unexpected runtime/HLE stop.
+* **Class (c) (`12`)**: CPU fault or host exception.
+
+## 2. Tracing with `REPSP_HLE_TRACE`
+
+Set `REPSP_HLE_TRACE=1` (and optionally `REPSP_HLE_TRACE_LIMIT=<N>`) to log each HLE call with its first four arguments and return value, followed by the kernel call-count, thread, open-file, and user-partition summaries.

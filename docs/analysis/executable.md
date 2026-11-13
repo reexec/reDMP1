@@ -176,6 +176,15 @@ sequenceDiagram
 
 ---
 
+## 8. 커널·UMD 임포트 NID 분류 및 모듈 내보내기 (**확인됨**)
+
+* **모듈 정보 (`module_info`)**: 이름 `djmax`, 버전 `1.1`, 속성 `0x0000`, 내보내기 심볼 `module_start` (`0x08804128` 기준) 및 `module_info` (`0x088CD340` 기준).
+* **커널·UMD HLE 대상 (11개 라이브러리, 65개 NID)**: `repsp::hle::kernel`의 65종 NID가 `dmp1_imports.c`의 해당 라이브러리 임포트와 누락 없이 일치함을 `nid_probe`로 교차 검증했다.
+  * `ThreadManForUser` (27), `IoFileMgrForUser` (12), `UtilsForUser` (7), `sceUmdUser` (6), `ModuleMgrForUser` (5), `SysMemUserForUser` (3), `StdioForUser` (3), `Kernel_Library` (2), `LoadExecForUser` (2), `scePower` (1), `sceSuspendForUser` (1).
+* **비커널(그래픽/오디오/입력/유틸리티/코덱) 라이브러리 (9개)**: `sceMpeg`, `sceSasCore`, `sceAtrac3plus`, `sceGe_user`, `sceAudio`, `sceUtility`, `sceDisplay`, `sceCtrl`, `sceDmac`. 초기 부팅은 `sceGe_user:0xA4FC06A4`에서 첫 비커널 정지한다.
+
+---
+
 # Executable Analysis: DJMAX Portable (ULKS-46050) (English)
 
 This document records facts confirmed by analyzing the original UMD executables (`PSP_GAME/SYSDIR/BOOT.BIN` and `EBOOT.BIN`) using `allegrexrecomp`.
@@ -227,3 +236,9 @@ This document records facts confirmed by analyzing the original UMD executables 
 * **Import Target**: `ThreadManForUser:0x446D8DE6` (`psp_import_088CCD6C`).
 * **Canonical Symbol**: `sceKernelCreateThread` in the public PSP SDK database.
 * **Runtime Verification**: `redmp1 roms --lift-check` executes entry point `0x08804128` under `GuardedRun`, cleanly captures the first HLE call at `ThreadManForUser:0x446D8DE6`, and terminates with status `STOPPED_ON_FIRST_HLE_CALL`.
+
+## 8. Kernel/UMD Import NID Classification & Module Exports (**Confirmed**)
+
+* **Module Info (`module_info`)**: Name `djmax`, version `1.1`, attributes `0x0000`; exported symbols `module_start` (`0x08804128` relocated) and `module_info` (`0x088CD340` relocated).
+* **Kernel & UMD HLE Targets (11 libraries, 65 NIDs)**: Cross-verified via `nid_probe` against `dmp1_imports.c` with 0 missing NIDs (`ThreadManForUser` 27, `IoFileMgrForUser` 12, `UtilsForUser` 7, `sceUmdUser` 6, `ModuleMgrForUser` 5, `SysMemUserForUser` 3, `StdioForUser` 3, `Kernel_Library` 2, `LoadExecForUser` 2, `scePower` 1, `sceSuspendForUser` 1).
+* **Non-Kernel Libraries (9 libraries)**: `sceMpeg`, `sceSasCore`, `sceAtrac3plus`, `sceGe_user`, `sceAudio`, `sceUtility`, `sceDisplay`, `sceCtrl`, `sceDmac`. Initial boot reaches `sceGe_user:0xA4FC06A4` as its first non-kernel stop.
