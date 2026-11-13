@@ -1,4 +1,10 @@
 {
   "base": "0x08804000",
-  "prefix": "dmp1"
+  "prefix": "dmp1",
+  "start_thread": {
+    "priority": 32,
+    "stack_size": 262144,
+    "attr": 0,
+    "source": "uOFW modulemgr"
+  }
 }
