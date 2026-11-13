@@ -141,6 +141,7 @@ else()
 endif()
 target_link_libraries(redmp1 PRIVATE
     redmp1_game
+    repsp::hle_kernel
     repsp::runtime
     repsp::platform
 )
