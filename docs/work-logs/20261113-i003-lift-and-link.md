@@ -176,6 +176,61 @@ Total Test time (real) =   0.75 sec
 
 ---
 
+## 6. 리뷰 1 반영 (Review 1 Implementation)
+
+### R1. 단일 PRX 분석 경로, 패치 정리 및 lift 불변성(`lift_invariance`)
+* `patches/psprecomp/`의 중복 패치를 한 벌(`0001-relocate-prx-at-base.patch`, `0002-seed-harvest-segment-bases.patch`)로 정리하고 `patches/psprecomp/README.md`와 `CMakeLists.txt`를 일치시킴. `CMakeLists.txt`에서 `git apply` 실행 시 gitignored `build/` 하위 경로에서 패치가 무음 건너뛰어지던 문제를 `--git-dir=/dev/null` 지정으로 해결.
+* `scripts/check_lift_invariance.py` 추가 및 `lift_invariance` CTest 등록: 기준 주소 `0`과 `0x08804000`에서 `allegrexrecomp funcs --list` 출력이 평행이동(`+0x08804000`)으로 100% 일치함을 자동 검증.
+  * 결과: `lift_invariance passed: 8785 functions, 4211 seeds, reached: 757820 bytes (92.0% of .text, 823684 bytes)`
+* `regenerate.py`로 코드 재생성 확인: `8785 functions, 17215 interior entries`, VFPU 트랩 `0 / 189455 (0.00%)`.
+* `docs/analysis/executable.md` §6 갱신: 기준 주소 `0`과 `0x08804000`의 동일 결과(`8,785`개 함수, `4,211`개 시드, `757,820` B / `92.0%`), `0x15C` (`sw $ra, 8($sp)`) 허위 분할 소멸 사례, issue #1(`9,159`개 함수) 대비 차이 원인을 명시.
+
+### R2 & R3. `repsp_raise_stop` 정지 경로 전환 및 `setjmp`/`longjmp` 제거
+* `src/recomp_abi/dispatch.c`: 디스패치 미스(`default_miss`) 시 미스 카운터를 유지하면서 `repsp_raise_stop`으로 정지하도록 변경.
+* `src/recomp_abi/trap.c`, `recomp_abi.h`: `setjmp.h` 및 `recomp_abi_set_stop_on_hle`/`recomp_abi_get_first_hle_nid`/`recomp_abi_get_hle_jmp_buf` 제거, `psp_unimplemented` 시 `repsp_raise_stop` 호출.
+* `src/app/main.cpp`: `InvokeGuestWithSetjmp` 제거, `repsp::runtime::GetNidRegistry().SetStopOnUnimplemented(true)`와 `GuardedRunResult::stopped`/`stop_reason`으로 최초 NID(`0x446D8DE6` / `sceKernelCreateThread`)를 포착·보고.
+* `tests/recomp_abi_probe.cpp`: 디스패치 미스 및 `psp_unimplemented` 테스트를 `GuardedRun`으로 감싸 정지 여부와 사유 문자열을 검증.
+
+### R4. `dispatch.c` 해시 테이블 채택 근거 문서화
+* `ARCHITECTURE.md`에 초기 설계의 게스트 주소 평면 배열 대신 `psprecomp`의 개방 주소 지정(open-addressed) 해시 테이블을 유지하는 이유(ABI 정합성, 메모리 효율, 등록 단순성)와 향후 프로파일링에서 병목이 확인될 때만 평면 배열로 전환한다는 방침을 기록.
+
+### R5. `src/recomp_abi/vfpu.c` UTF-8 주석 인코딩 복원
+* 손상된 헤더 주석을 원본 UTF-8(`/* psprecomp — the VFPU. See include/psprecomp/vfpu.h. */`)으로 복원.
+
+### 리뷰 1 검증 결과
+* **Win64 Debug (`ctest --test-dir build/win64-debug -C Debug --output-on-failure`)**:
+  ```
+  100% tests passed, 0 tests failed out of 17
+  Total Test time (real) =   2.46 sec
+  ```
+* **Win64 Release (`ctest --test-dir build/win64-release -C Release --output-on-failure`)**:
+  ```
+  100% tests passed, 0 tests failed out of 17
+  Total Test time (real) =   1.23 sec
+  ```
+* **WSL Ubuntu-24.04 Linux x64 Debug (`ctest --test-dir /tmp/redmp1-build --output-on-failure`)**:
+  ```
+  100% tests passed, 0 tests failed out of 17
+  Total Test time (real) =   2.39 sec
+  ```
+* **`redmp1.exe roms --lift-check` 출력**:
+  ```
+  Status:      STOPPED_ON_FIRST_HLE_CALL
+  Library:     ThreadManForUser
+  NID:         0x446d8de6
+  Name:        sceKernelCreateThread (source: public PSP SDK NID database)
+  Dispatches:  0
+  ```
+
+### 리뷰 1 커밋 목록 (`reDMP1`, 브랜치 `i003-lift-and-link`)
+* `284c58e`: Consolidate psprecomp patches, fix PRX analysis invariance, and add lift_invariance test (#3)
+* `2e5ba92`: Use repsp_raise_stop and NidRegistry stop path instead of setjmp/longjmp (#3)
+* `3fe1386`: Preserve original UTF-8 comment encoding in vfpu.c (#3)
+* `00e1d7d`: Document dispatch hash table deviation from initial design (#3)
+* (이 커밋): Record Review 1 changes and verification in work log (#3)
+
+---
+
 # Work Log: Relocated PRX Lifting and Link Verification (issue #3) (English)
 
 Date: 2026-11-13
