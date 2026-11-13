@@ -40,8 +40,8 @@ flowchart TD
    * `allegrexrecomp`가 기계적으로 생성한 C 코드가 호출하는 `psprecomp` ABI 인터페이스(`psp_cpu`, `psp_read*`, `psp_write*`, `psp_hle_call`, `psp_syscall`, VFPU 행렬 연산자 등)를 완벽하게 구현하여 `repsp`의 재컴파일 코드 계약(`include/repsp/recomp/guest_cpu.h`) 및 메모리 계층에 바인딩.
    * `cpu.c`: `psp_cpu_t psp_cpu` 전역 레지스터 상태 정의 및 `repsp_guest_cpu_ops` 콜백(`save`, `restore`, `get_gpr`, `set_gpr`, `call_guest`) 구현과 등록.
    * `mem.c`: `psp_read8/16/32/64`, `psp_write8/16/32/64` 인라인 메모리 접근자를 `repsp_guest_read*`, `repsp_guest_write*`에 매핑.
-   * `dispatch.c`: 재컴파일된 함수 디스패치 테이블 및 `psp_dispatch_call` 라우팅.
-   * `trap.c`: `psp_hle_call`, `psp_syscall`, `psp_trap` 처리 및 `stop_on_hle` 디버깅/테스트 트랩 구현.
+   * `dispatch.c`: 재컴파일된 함수 디스패치 테이블 및 `psp_dispatch_call` 라우팅. 초기 설계에서는 게스트 주소 기반 평면 배열(flat array) 색인을 검토했으나, `psprecomp` ABI 구현과의 정합성과 메모리 효율·등록 단순성을 위해 `psprecomp`의 개방 주소 지정(open-addressed) 해시 테이블을 유지한다. 향후 프로파일링에서 간접 호출 디스패치 오버헤드가 병목으로 확인되는 경우에만 평면 배열로 전환한다.
+   * `trap.c`: `psp_hle_call`, `psp_syscall`, `psp_unimplemented` 처리. 디스패치 미스 및 `psp_unimplemented` 발생 시 `repsp_raise_stop`을 통해 `GuardedRun`으로 제어를 반환한다.
    * `vfpu.c`: psprecomp가 생성하는 VFPU 전치, 행렬 연산 매크로 도우미.
    * **`repsp`는 `psprecomp`에 의존하지 않으며**, 어댑터는 reDMP1 내부에 위치함.
 4. **`recomp` (`src/game/dmp1/recomp/generated/`, 타깃 `redmp1_recomp`)**:
@@ -121,7 +121,7 @@ This document describes reDMP1's layer structure, component dependencies, recomp
 
 * **`app` (`src/app/`, target `redmp1`)**: Application entry point, CLI arguments, orchestration.
 * **`game/dmp1` (`src/game/dmp1/`, target `redmp1_game`)**: Title profile, variant identification, SFO parsing via repsp, SHA-1 validation.
-* **`recomp_abi` (`src/recomp_abi/`, target `redmp1_recomp_abi`)**: Adapter defining psprecomp ABI globals/functions and binding to repsp's recompiled-code contract. repsp does not depend on psprecomp.
+* **`recomp_abi` (`src/recomp_abi/`, target `redmp1_recomp_abi`)**: Adapter defining psprecomp ABI globals/functions and binding to repsp's recompiled-code contract. repsp does not depend on psprecomp. Note on `dispatch.c`: although the initial design considered a guest-address flat array, the implementation keeps `psprecomp`'s open-addressed hash table for ABI compatibility, memory efficiency, and simpler registration, and will switch to a flat array only if profiling shows dispatch overhead as a bottleneck.
 * **`repsp` (`third_party/repsp`)**: Shared PSP runtime (GuestMemory, NidRegistry, HLE kernel, platform backends with SDL3).
 
 ## 2. Recompilation Pipeline
