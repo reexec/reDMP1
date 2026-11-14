@@ -488,6 +488,7 @@ int main(int argc, char* argv[])
 #if REDMP1_HAVE_RECOMP
     return RunBoot(game_dir, result, headless);
 #else
+    (void)headless;
     return 0;
 #endif
 }
