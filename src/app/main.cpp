@@ -11,11 +11,14 @@
 #include "recomp_abi.h"
 #include <psprecomp/cpu.h>
 #include <psprecomp/dispatch.h>
+#include <repsp/hle/display.h>
+#include <repsp/hle/ge.h>
 #include <repsp/hle/kernel.h>
 #include <repsp/platform/guarded_run.h>
 #include <repsp/platform/path.h>
 #include <repsp/recomp/guest_cpu.h>
 #include <repsp/runtime/guest_memory.h>
+#include <repsp/runtime/nid_names.h>
 #include <repsp/runtime/nid_registry.h>
 #include <repsp/runtime/prx_loader.h>
 #include <repsp/runtime/scheduler.h>
@@ -38,6 +41,7 @@ void PrintUsage(const char* prog)
               << "  <game_directory>       Path to extracted game directory (containing PSP_GAME/)\n\n"
               << "Options:\n"
               << "  --variants <path>      Path to variants.json (default: search adjacent/source)\n"
+              << "  --headless             Run without opening a display window\n"
               << "  --lift-check           Execute recompiled code up to the first firmware call\n"
               << "  --help, -h             Show this help message\n"
               << "  --version, -v          Show version\n";
@@ -55,27 +59,24 @@ std::vector<uint8_t> ReadBinaryFile(const std::filesystem::path& path)
     return buffer;
 }
 
-const char* LookupPublicNidName(const std::string& lib, uint32_t nid)
-{
-    if (lib == "ThreadManForUser")
-    {
-        if (nid == 0x446D8DE6) return "sceKernelCreateThread";
-        if (nid == 0xF475845D) return "sceKernelStartThread";
-    }
-    return nullptr;
-}
-
 uint32_t ParseStoppedNidFromReason(const std::string& reason)
 {
-    const std::string prefix = "Unimplemented NID 0x";
-    auto pos = reason.find(prefix);
-    if (pos == std::string::npos)
+    if (reason.rfind("Unimplemented NID ", 0) != 0)
+    {
+        return 0;
+    }
+    auto hex_pos = reason.find("0x");
+    if (hex_pos == std::string::npos)
+    {
+        hex_pos = reason.find("0X");
+    }
+    if (hex_pos == std::string::npos)
     {
         return 0;
     }
     try
     {
-        return static_cast<uint32_t>(std::stoul(reason.substr(pos + prefix.size()), nullptr, 16));
+        return static_cast<uint32_t>(std::stoul(reason.substr(hex_pos + 2), nullptr, 16));
     }
     catch (...)
     {
@@ -182,15 +183,15 @@ int RunLiftCheck(const std::filesystem::path& game_dir, const redmp1::IdentifyRe
         }
     }
 
-    const char* func_name = LookupPublicNidName(lib_name, first_nid);
+    const repsp::runtime::NidNameEntry* known_entry = repsp::runtime::LookupKnownNid(first_nid);
 
     std::cout << "\n[lift-check] === FIRST FIRMWARE CALL STOP REPORT ===\n"
               << "  Status:      STOPPED_ON_FIRST_HLE_CALL\n"
               << "  Library:     " << lib_name << "\n"
               << "  NID:         0x" << std::hex << first_nid << std::dec << "\n";
-    if (func_name)
+    if (known_entry)
     {
-        std::cout << "  Name:        " << func_name << " (source: public PSP SDK NID database)\n";
+        std::cout << "  Name:        " << known_entry->name << " (source: SHA-1 PSPSDK NID table)\n";
     }
     else
     {
@@ -227,7 +228,7 @@ bool IsKernelLibrary(const std::string& lib)
     return false;
 }
 
-int RunBoot(const std::filesystem::path& game_dir, const redmp1::IdentifyResult& idResult)
+int RunBoot(const std::filesystem::path& game_dir, const redmp1::IdentifyResult& idResult, bool headless)
 {
     uint32_t base = 0x08804000u;
     std::filesystem::path exe_path = game_dir / "PSP_GAME" / "SYSDIR" / idResult.executable_name;
@@ -281,6 +282,13 @@ int RunBoot(const std::filesystem::path& game_dir, const redmp1::IdentifyResult&
     cfg.first_thread_attr = 0;
 
     repsp::hle::kernel::Register(cfg);
+    repsp::hle::ge::Register();
+
+    repsp::hle::display::DisplayHleConfig disp_cfg;
+    disp_cfg.headless = headless;
+    disp_cfg.scale = 2;
+    disp_cfg.window_title = "reDMP1 - DJMAX Portable";
+    repsp::hle::display::Register(disp_cfg);
 
     repsp::runtime::Scheduler& sched = repsp::runtime::GetScheduler();
     int32_t entry_tid = sched.CreateThread(
@@ -307,6 +315,10 @@ int RunBoot(const std::filesystem::path& game_dir, const redmp1::IdentifyResult&
 
     repsp::runtime::GetNidRegistry().SetStopOnUnimplemented(false);
 
+    const std::string ge_stats = repsp::hle::ge::FormatStats();
+    const std::string disp_stats = repsp::hle::display::FormatStats();
+    repsp::hle::display::Shutdown();
+
     int exit_code = 0;
     std::cout << "\n[boot] === BOOT STOP REPORT ===\n";
     if (guard_res.stopped)
@@ -324,10 +336,11 @@ int RunBoot(const std::filesystem::path& game_dir, const redmp1::IdentifyResult&
                 }
             }
             const bool is_kernel = IsKernelLibrary(lib_name);
+            const std::string formatted_nid = repsp::runtime::FormatKnownNid(stop_nid);
             std::cout << "  Class:       "
                       << (is_kernel ? "(b) Unimplemented kernel NID" : "(a) Unimplemented non-kernel NID") << "\n"
                       << "  Library:     " << lib_name << "\n"
-                      << "  NID:         0x" << std::hex << stop_nid << std::dec << "\n"
+                      << "  NID:         " << formatted_nid << "\n"
                       << "  Reason:      " << guard_res.stop_reason << "\n";
             exit_code = is_kernel ? 10 : 0;
         }
@@ -357,6 +370,8 @@ int RunBoot(const std::filesystem::path& game_dir, const redmp1::IdentifyResult&
     }
     std::cout << "  Dispatches:  " << psp_dispatch_calls() << "\n"
               << "  Exit code:   " << exit_code << "\n"
+              << "  " << disp_stats
+              << "  " << ge_stats
               << "==============================\n";
 
     repsp::hle::kernel::PrintKernelSummary();
@@ -414,6 +429,7 @@ int main(int argc, char* argv[])
     std::filesystem::path game_dir = arg1;
     std::filesystem::path variants_path;
     bool lift_check = false;
+    bool headless = false;
 
     for (int i = 2; i < argc; ++i)
     {
@@ -425,6 +441,10 @@ int main(int argc, char* argv[])
         else if (opt == "--lift-check")
         {
             lift_check = true;
+        }
+        else if (opt == "--headless")
+        {
+            headless = true;
         }
     }
 
@@ -466,7 +486,7 @@ int main(int argc, char* argv[])
     }
 
 #if REDMP1_HAVE_RECOMP
-    return RunBoot(game_dir, result);
+    return RunBoot(game_dir, result, headless);
 #else
     return 0;
 #endif
