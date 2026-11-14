@@ -1,11 +1,15 @@
 #include "redmp1/dmp1_profile.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #if REDMP1_HAVE_RECOMP
@@ -20,8 +24,10 @@
 #include <repsp/hle/dmac.h>
 #include <repsp/hle/ge.h>
 #include <repsp/hle/kernel.h>
+#include <repsp/hle/mpeg.h>
 #include <repsp/hle/sascore.h>
 #include <repsp/platform/guarded_run.h>
+#include <repsp/platform/input.h>
 #include <repsp/platform/path.h>
 #include <repsp/platform/platform.h>
 #include <repsp/recomp/guest_cpu.h>
@@ -52,12 +58,115 @@ void PrintUsage(const char* prog)
               << "  --variants <path>      Path to variants.json (default: search adjacent/source)\n"
               << "  --headless             Run without opening a display window\n"
               << "  --max-vblanks <n>      Stop execution after <n> VBlanks (0 = unlimited)\n"
+              << "  --input-script <path>  Deterministic controller script (<vblank> <button names>)\n"
               << "  --lift-check           Execute recompiled code up to the first firmware call\n"
               << "  --help, -h             Show this help message\n"
               << "  --version, -v          Show version\n";
 }
 
 #if REDMP1_HAVE_RECOMP
+struct InputScriptEntry
+{
+    uint32_t vblank = 0;
+    uint32_t buttons = 0;
+};
+
+bool ParseInputButtonToken(const std::string& raw, uint32_t& mask_out)
+{
+    std::string tok;
+    tok.reserve(raw.size());
+    for (unsigned char c : raw)
+    {
+        tok.push_back(static_cast<char>(std::toupper(c)));
+    }
+    if (tok == "NONE" || tok == "CLEAR" || tok == "0")
+    {
+        mask_out = 0u;
+        return true;
+    }
+    if (tok == "SELECT") { mask_out = repsp::platform::kPspCtrlSelect; return true; }
+    if (tok == "START") { mask_out = repsp::platform::kPspCtrlStart; return true; }
+    if (tok == "UP") { mask_out = repsp::platform::kPspCtrlUp; return true; }
+    if (tok == "RIGHT") { mask_out = repsp::platform::kPspCtrlRight; return true; }
+    if (tok == "DOWN") { mask_out = repsp::platform::kPspCtrlDown; return true; }
+    if (tok == "LEFT") { mask_out = repsp::platform::kPspCtrlLeft; return true; }
+    if (tok == "L" || tok == "LTRIGGER" || tok == "L_TRIGGER") { mask_out = repsp::platform::kPspCtrlLTrigger; return true; }
+    if (tok == "R" || tok == "RTRIGGER" || tok == "R_TRIGGER") { mask_out = repsp::platform::kPspCtrlRTrigger; return true; }
+    if (tok == "TRIANGLE") { mask_out = repsp::platform::kPspCtrlTriangle; return true; }
+    if (tok == "CIRCLE") { mask_out = repsp::platform::kPspCtrlCircle; return true; }
+    if (tok == "CROSS") { mask_out = repsp::platform::kPspCtrlCross; return true; }
+    if (tok == "SQUARE") { mask_out = repsp::platform::kPspCtrlSquare; return true; }
+    return false;
+}
+
+bool LoadInputScript(const std::filesystem::path& path, std::vector<InputScriptEntry>& entries)
+{
+    std::ifstream in(path);
+    if (!in.is_open())
+    {
+        std::cerr << "[boot] Error: failed to open input script: " << path << "\n";
+        return false;
+    }
+
+    entries.clear();
+    std::string line;
+    size_t line_no = 0;
+    while (std::getline(in, line))
+    {
+        ++line_no;
+        const size_t hash_pos = line.find('#');
+        if (hash_pos != std::string::npos)
+        {
+            line.erase(hash_pos);
+        }
+        std::istringstream iss(line);
+        std::string vblank_tok;
+        if (!(iss >> vblank_tok))
+        {
+            continue;
+        }
+        char* end_ptr = nullptr;
+        unsigned long vblank_val = std::strtoul(vblank_tok.c_str(), &end_ptr, 10);
+        if (vblank_tok[0] == '-' || end_ptr == nullptr || *end_ptr != '\0')
+        {
+            std::cerr << "[boot] Error: invalid vblank on script line " << line_no << ": " << vblank_tok << "\n";
+            return false;
+        }
+
+        uint32_t mask = 0u;
+        std::string btn_tok;
+        while (iss >> btn_tok)
+        {
+            uint32_t single = 0u;
+            if (!ParseInputButtonToken(btn_tok, single))
+            {
+                std::cerr << "[boot] Error: unknown button '" << btn_tok << "' on script line " << line_no << "\n";
+                return false;
+            }
+            mask |= single;
+        }
+        entries.push_back(InputScriptEntry{static_cast<uint32_t>(vblank_val), mask});
+    }
+
+    std::stable_sort(entries.begin(), entries.end(),
+                     [](const InputScriptEntry& a, const InputScriptEntry& b) { return a.vblank < b.vblank; });
+
+    // Coalesce duplicate vblank timestamps by keeping the last entry written for that vblank.
+    std::vector<InputScriptEntry> dedup;
+    for (const auto& entry : entries)
+    {
+        if (!dedup.empty() && dedup.back().vblank == entry.vblank)
+        {
+            dedup.back().buttons = entry.buttons;
+        }
+        else
+        {
+            dedup.push_back(entry);
+        }
+    }
+    entries = std::move(dedup);
+    return true;
+}
 std::vector<uint8_t> ReadBinaryFile(const std::filesystem::path& path)
 {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
@@ -241,8 +350,18 @@ bool IsKernelLibrary(const std::string& lib)
 int RunBoot(const std::filesystem::path& game_dir,
             const redmp1::IdentifyResult& idResult,
             bool headless,
-            uint32_t max_vblanks)
+            uint32_t max_vblanks,
+            const std::filesystem::path& input_script_path)
 {
+    std::vector<InputScriptEntry> input_script;
+    if (!input_script_path.empty())
+    {
+        if (!LoadInputScript(input_script_path, input_script))
+        {
+            return 1;
+        }
+    }
+
     uint32_t base = 0x08804000u;
     std::filesystem::path exe_path = game_dir / "PSP_GAME" / "SYSDIR" / idResult.executable_name;
     auto exe_bytes = ReadBinaryFile(exe_path);
@@ -318,10 +437,30 @@ int RunBoot(const std::filesystem::path& game_dir,
     disp_cfg.window_title = "reDMP1 - DJMAX Portable";
     repsp::hle::display::Register(disp_cfg);
     repsp::hle::ctrl::Register();
+    if (!input_script.empty())
+    {
+        repsp::hle::ctrl::SetInputSource([input_script](uint32_t vcount)
+        {
+            repsp::platform::ControllerState state{};
+            for (const auto& entry : input_script)
+            {
+                if (entry.vblank <= vcount)
+                {
+                    state.buttons = entry.buttons;
+                }
+                else
+                {
+                    break;
+                }
+            }
+            return state;
+        });
+    }
     repsp::hle::dmac::Register();
     repsp::hle::audio::Register();
     repsp::hle::sascore::Register();
     repsp::hle::atrac::Register();
+    repsp::hle::mpeg::Register();
 
     repsp::runtime::Scheduler& sched = repsp::runtime::GetScheduler();
     int32_t entry_tid = sched.CreateThread(
@@ -334,6 +473,8 @@ int RunBoot(const std::filesystem::path& game_dir,
     if (entry_tid < 0)
     {
         std::cerr << "[boot] Error: CreateThread failed: 0x" << std::hex << entry_tid << std::dec << "\n";
+        repsp::hle::ctrl::SetInputSource(nullptr);
+        repsp::hle::mpeg::Shutdown();
         repsp::hle::atrac::Shutdown();
         repsp::hle::sascore::Shutdown();
         repsp::hle::audio::Shutdown();
@@ -379,6 +520,9 @@ int RunBoot(const std::filesystem::path& game_dir,
     const std::string audio_stats = repsp::hle::audio::FormatStats();
     const std::string sas_stats = repsp::hle::sascore::FormatStats();
     const std::string atrac_stats = repsp::hle::atrac::FormatStats();
+    const std::string mpeg_stats = repsp::hle::mpeg::FormatStats();
+    repsp::hle::ctrl::SetInputSource(nullptr);
+    repsp::hle::mpeg::Shutdown();
     repsp::hle::atrac::Shutdown();
     repsp::hle::sascore::Shutdown();
     repsp::hle::audio::Shutdown();
@@ -450,6 +594,7 @@ int RunBoot(const std::filesystem::path& game_dir,
               << "  Audio:       " << audio_stats << "\n"
               << "  " << sas_stats << "\n"
               << "  " << atrac_stats << "\n"
+              << "  " << mpeg_stats << "\n"
               << "==============================\n";
 
     repsp::hle::kernel::PrintKernelSummary();
@@ -506,6 +651,7 @@ int main(int argc, char* argv[])
 
     std::filesystem::path game_dir = arg1;
     std::filesystem::path variants_path;
+    std::filesystem::path input_script_path;
     bool lift_check = false;
     bool headless = false;
     uint32_t max_vblanks = 0;
@@ -516,6 +662,15 @@ int main(int argc, char* argv[])
         if (opt == "--variants" && i + 1 < argc)
         {
             variants_path = argv[++i];
+        }
+        else if (opt == "--input-script")
+        {
+            if (i + 1 >= argc)
+            {
+                std::cerr << "Error: --input-script requires a file path.\n";
+                return 1;
+            }
+            input_script_path = argv[++i];
         }
         else if (opt == "--lift-check")
         {
@@ -582,10 +737,11 @@ int main(int argc, char* argv[])
     }
 
 #if REDMP1_HAVE_RECOMP
-    return RunBoot(game_dir, result, headless, max_vblanks);
+    return RunBoot(game_dir, result, headless, max_vblanks, input_script_path);
 #else
     (void)headless;
     (void)max_vblanks;
+    (void)input_script_path;
     return 0;
 #endif
 }
