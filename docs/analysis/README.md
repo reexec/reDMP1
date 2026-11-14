@@ -11,6 +11,7 @@
 | [audio.md](audio.md) | `sceAudio`·`sceSasCore`·`sceAtrac3plus` 초기화, 오디오 스레드 구조 및 스트리밍 경로 |
 | [video.md](video.md) | `sceMpeg` 초기화, `opening.pmf` PSMF/PES/AU 구성, 스킵 후 `"NOW LOADING"` 전환 |
 | [savedata.md](savedata.md) | `sceUtility` 세이브 데이터(`ULKS46050/SD.BIN`) 분기, `PARAM.SFO` 메타데이터, 메시지 다이얼로그 흐름 |
+| [scene-flow.md](scene-flow.md) | 타이틀 이후 메뉴(Mode Select) 진입 흐름 및 `Instance.cpp:37` (`jalr` 폴스루 누락) 원인 분석 |
 
 ---
 
@@ -27,3 +28,4 @@ Findings from the original disc and executable, by topic, marked **confirmed**, 
 | [audio.md](audio.md) | `sceAudio`, `sceSasCore`, and `sceAtrac3plus` initialization, audio threads, and streaming paths |
 | [video.md](video.md) | `sceMpeg` initialization, `opening.pmf` PSMF/PES/AU layout, skip transition to `"NOW LOADING"` |
 | [savedata.md](savedata.md) | `sceUtility` save data (`ULKS46050/SD.BIN`) branches, `PARAM.SFO` metadata, message dialog flow |
+| [scene-flow.md](scene-flow.md) | Post-title Main Menu / Mode Select transition and `Instance.cpp:37` (`jalr` fall-through) root-cause analysis |
