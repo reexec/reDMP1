@@ -29,9 +29,9 @@ flowchart TD
 
 1. **`app` (`src/app/`, 타깃 `redmp1`)**:
    * 애플리케이션 진입점(`main.cpp`).
-   * 사용자 명령줄 인자(`--variants`, `--lift-check`, 게임 디렉터리 경로) 파싱 및 옵션 처리.
+   * 사용자 명령줄 인자(`--variants`, `--lift-check`, `--headless`, 게임 디렉터리 경로) 파싱 및 옵션 처리.
    * `redmp1_game`의 `IdentifyGameDirectory`를 호출하여 게임 디스크 유효성 검사.
-   * 기본 실행(`REDMP1_HAVE_RECOMP=1`) 시 `LoadPrx`, `repsp::hle::kernel::Register(KernelConfig)`(`disc0:`/`umd0:`/`ms0:` 마운트), `Scheduler::CreateThread("module_start")` 및 `GuardedRun` 기반 부팅을 오케스트레이션하고, 정지 분류 `(a)`/`(b)`/`(c)` 및 `PrintKernelSummary()`를 출력한다.
+   * 기본 실행(`REDMP1_HAVE_RECOMP=1`) 시 `LoadPrx`, `repsp::hle::kernel::Register(KernelConfig)`(`disc0:`/`umd0:`/`ms0:` 마운트), `repsp::hle::ge::Register`, `repsp::hle::display::Register`(`--headless` 지원), `Scheduler::CreateThread("module_start")` 및 `GuardedRun` 기반 부팅을 오케스트레이션하고, 정지 분류 `(a)`/`(b)`/`(c)`(SHA-1 공개 NID 이름 표기 포함), 디스플레이·GE 통계 및 `PrintKernelSummary()`를 출력한다.
 2. **`game/dmp1` (`src/game/dmp1/`, 타깃 `redmp1_game`)**:
    * DJMAX Portable 타이틀 고유 메타데이터와 프로파일 정의(`include/redmp1/dmp1_profile.h`).
    * `variants.json` 파싱 및 디스크 식별 로직.
@@ -39,7 +39,7 @@ flowchart TD
    * `repsp::runtime::ComputeSha1`을 사용하여 후보 실행 파일의 SHA-1 해시 검증.
 3. **`recomp_abi` (`src/recomp_abi/`, 타깃 `redmp1_recomp_abi`)**:
    * `allegrexrecomp`가 기계적으로 생성한 C 코드가 호출하는 `psprecomp` ABI 인터페이스(`psp_cpu`, `psp_read*`, `psp_write*`, `psp_hle_call`, `psp_syscall`, VFPU 행렬 연산자 등)를 완벽하게 구현하여 `repsp`의 재컴파일 코드 계약(`include/repsp/recomp/guest_cpu.h`) 및 메모리 계층에 바인딩.
-   * `cpu.c`: `psp_cpu_t psp_cpu` 전역 레지스터 상태 정의 및 `repsp_guest_cpu_ops` 콜백(`save`, `restore`, `get_gpr`, `set_gpr`, `call_guest`) 구현과 등록.
+   * `cpu.c`: `psp_cpu_t psp_cpu` 전역 레지스터 상태 정의 및 `repsp_guest_cpu_ops` 콜백(`save`, `restore`, `get_gpr`, `set_gpr`, `get_fpr`, `set_fpr`, `call_guest`) 구현과 등록.
    * `mem.c`: `psp_read8/16/32/64`, `psp_write8/16/32/64` 인라인 메모리 접근자를 `repsp_guest_read*`, `repsp_guest_write*`에 매핑.
    * `dispatch.c`: 재컴파일된 함수 디스패치 테이블 및 `psp_dispatch_call` 라우팅. 초기 설계에서는 게스트 주소 기반 평면 배열(flat array) 색인을 검토했으나, `psprecomp` ABI 구현과의 정합성과 메모리 효율·등록 단순성을 위해 `psprecomp`의 개방 주소 지정(open-addressed) 해시 테이블을 유지한다. 향후 프로파일링에서 간접 호출 디스패치 오버헤드가 병목으로 확인되는 경우에만 평면 배열로 전환한다.
    * `trap.c`: `psp_hle_call`, `psp_syscall`, `psp_unimplemented` 처리. 디스패치 미스 및 `psp_unimplemented` 발생 시 `repsp_raise_stop`을 통해 `GuardedRun`으로 제어를 반환한다.

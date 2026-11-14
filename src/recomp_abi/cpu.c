@@ -49,6 +49,21 @@ static void cpu_call_guest(uint32_t address) {
     psp_call_from_host(address);
 }
 
+static uint32_t cpu_get_fpr(int index) {
+    if (index >= 0 && index < 32) {
+        uint32_t bits = 0;
+        memcpy(&bits, &psp_cpu.f[index], sizeof(bits));
+        return bits;
+    }
+    return 0;
+}
+
+static void cpu_set_fpr(int index, uint32_t value) {
+    if (index >= 0 && index < 32) {
+        memcpy(&psp_cpu.f[index], &value, sizeof(value));
+    }
+}
+
 static repsp_guest_cpu_ops s_cpu_ops = {
     .context_size = sizeof(psp_cpu_state),
     .save = cpu_save,
@@ -56,6 +71,8 @@ static repsp_guest_cpu_ops s_cpu_ops = {
     .get_gpr = cpu_get_gpr,
     .set_gpr = cpu_set_gpr,
     .call_guest = cpu_call_guest,
+    .get_fpr = cpu_get_fpr,
+    .set_fpr = cpu_set_fpr,
 };
 
 void recomp_abi_init(void) {

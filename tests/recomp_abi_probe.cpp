@@ -53,6 +53,18 @@ int main(void)
     CHECK(ops->get_gpr != nullptr);
     CHECK(ops->set_gpr != nullptr);
     CHECK(ops->call_guest != nullptr);
+    CHECK(ops->get_fpr != nullptr);
+    CHECK(ops->set_fpr != nullptr);
+
+    // 2b. FPR operations
+    const float test_fps = 59.94005966f;
+    uint32_t test_fps_bits = 0;
+    std::memcpy(&test_fps_bits, &test_fps, sizeof(test_fps_bits));
+    ops->set_fpr(0, test_fps_bits);
+    CHECK(ops->get_fpr(0) == test_fps_bits);
+    CHECK(std::fabs(psp_cpu.f[0] - test_fps) < 1e-6f);
+    CHECK(ops->get_fpr(-1) == 0);
+    CHECK(ops->get_fpr(32) == 0);
 
     // 3. Memory read/write operations
     psp_write32(0x08800000, 0x12345678);
