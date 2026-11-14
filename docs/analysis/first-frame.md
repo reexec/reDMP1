@@ -486,3 +486,14 @@ flowchart TD
   * **Gameplay**: Full-screen BGA animation behind the centered 4-button PGP gear (left gauge, `0000`/`000000` counters, red judgement line) with blue and white/red notes scrolling down.
 * **Newly observed GE Color Test (`0x27`/`0xD8`/`0xD9`/`0xDA`)**:
   * The gameplay gear border and digit counter backgrounds rely on GE Color Test (`0x27` `CTE=1`, `0xD8` `CTEST=3` `NOTEQUAL`, `0xD9` `CREF=0xC000C0`, `0xDA` `CMSK=0xC0C0C0`, issued `8,805` times) to key out `#FF00FF` magenta; implementing Color Test in `repsp` resolved the magenta boxes cleanly (`GE: 849 lists, 774,726 commands, 0 signals, 849 finishes`, `pixels written: 323,309,554` at `--max-vblanks 2100`).
+
+## 9. OpenGL Render Backend Verification (`--renderer gl`, `--max-vblanks 700` / `2100`, **Confirmed**)
+
+* **GE features exercised on real game (`--renderer gl --scale 1 --max-vblanks 700`)**:
+  * `OpenGL: draws=2362 fbo_switches=319 tex_uploads=11 tex_hits=4946 approx_blends=0 cpu_overlaps=0 unsupported=0`
+  * All GE states, blend modes, texture formats, and render-target switches used up to the intro/title sequence are handled directly by the OpenGL 3.3 backend without unsupported commands, approximated blends, or CPU-write overlap diagnostics.
+* **Pixel comparison vs. software backend (`--scale 1`)**:
+  * Opening movie frames (`frame_0020.bmp`, `frame_0060.bmp`, `frame_0120.bmp`) match software output with `max_diff=0`, `exceed(>1)=0`.
+  * Later UI/gameplay screens use `psm=1` (`ABGR1555`, 5 bits per channel) framebuffers, where the software renderer packs each pixel to 5-bit precision (`ColorPack`) while the OpenGL backend renders into `RGBA8` FBOs; this introduces up to 5-bit quantization differences plus VBlank phase offset because the OpenGL backend presents faster (`457` vs `321` frames in 700 VBlanks; `1473` vs `1002` frames in 2100 VBlanks).
+* **Multi-scale rendering (`--renderer gl --scale 3`)**:
+  * Verified `700` VBlanks cleanly (`454` frames presented, `interval mean=25.74 ms`, `max=1218.51 ms`, `approx_blends=0 cpu_overlaps=0 unsupported=0`).

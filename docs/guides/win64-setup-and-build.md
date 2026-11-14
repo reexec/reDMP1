@@ -40,7 +40,14 @@ cmake --preset win64-release
 cmake --build build/win64-release --config Release
 ```
 
-또는 제공되는 PowerShell 스크립트를 사용하여 한 번에 빌드 및 테스트를 실행할 수 있습니다:
+또는 제공되는 배치/PowerShell 스크립트를 사용하여 한 번에 빌드 및 테스트를 실행할 수 있습니다:
+
+```bat
+scripts\build_win64.bat [Debug|Release] [ffmpeg] [notest]
+```
+
+* `ffmpeg`: 선택적 FFmpeg 코덱 플러그인(`redmp1_codec_ffmpeg.dll`, 오프닝 동영상·ATRAC3+ 디코딩)을 함께 빌드하고, 첫 실행 시 고정된 LGPL 공유 빌드를 `third_party/repsp/third_party/_ffmpeg`에 받습니다.
+* `notest`: 빌드 후 CTest 실행을 건너뜁니다.
 
 ```powershell
 .\scripts\build_win64.ps1 -Config Debug
@@ -101,6 +108,8 @@ cmake --preset win64-debug
 cmake --build build/win64-debug --config Debug
 ctest --test-dir build/win64-debug -C Debug --output-on-failure
 ```
+
+Or use `scripts\build_win64.bat [Debug|Release] [ffmpeg] [notest]` (`ffmpeg` downloads the pinned LGPL shared build once and builds the optional codec plugin; `notest` skips CTest).
 
 ## 3. Disc Registration & Running
 
