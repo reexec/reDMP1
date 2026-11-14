@@ -300,6 +300,32 @@ flowchart TD
   * **다음 정지 지점**: 분류 `(a) Unimplemented non-kernel NID` (`Exit code: 0`), `sceAudio:sceAudioChReserve (0x5EC81C55)`.
   * **3회 연속 실행 일치**: 3회 모두 `Class (a)` 정지 NID, 124건의 비 `CpuSuspendIntr`/`CpuResumeIntr` HLE·I/O·ModuleMgr 호출 순서와 인자, GE·스레드·열린 파일 상태가 100% 일치했다. 실시간 경과에 따라 `sceKernelGetSystemTimeWide` 반환값(`0x0000109D`/`0x00000FDB`/`0x00001038`)과 `vblanks`/`Ctrl: produced` 수(`2`/`2`/`3`)만 달라졌다.
 
+## 5. 오디오 초기화 이후 진행 및 다음 정지 지점 (**확인됨**)
+
+```mermaid
+flowchart TD
+    S["sceAudioChReserve x4 -> ch0(448), ch1(256), ch2(256), ch3(256)"] --> L["sceAudioSetChannelDataLen: ch2=256, ch1=1024"]
+    L --> SAS["__sceSasInit(0x08B91440, 256, 32, 0, 44100) + __sceSasRevType(-1) + RevVON(1,0) + RevEVOL(4096,4096)"]
+    SAS --> EVF["DcacheWritebackInvalidateAll -> CreateEventFlag('snd_evf', uid=0xF)"]
+    EVF --> TH1["sound_poll_thread(0x11) 생성·시작 -> 1차 __sceSasCore + sceAudioOutputPannedBlocking(ch2, 256)"]
+    TH1 --> TH2["stream_sound_poll_thread(0x13) 생성·시작 -> SetEventFlag(0xF, 4) -> SetGPO(0xFE)"]
+    TH2 --> CLN["DeleteEventFlag(0xB) + sceGeUnsetCallback(0)"]
+    CLN --> PRX["PRX 로드·시작: videocodec.prx(0x14), mpegbase.prx(0x15), mpeg.prx(0x16)"]
+    PRX --> END["정지: sceMpeg:sceMpegInit (0x682A619B)"]
+```
+
+* **오디오 채널·SAS·스레드 기동(세부 분석: [audio.md](audio.md))**:
+  * `sceAudioChReserve` 4회로 `ch0=0(448)`, `ch1=1(256)`, `ch2=2(256)`, `ch3=3(256)`을 예약하고, `sceAudioSetChannelDataLen`으로 `ch2=256`, `ch1=1024`를 설정했다.
+  * `__sceSasInit(0x08B91440, 256, 32, 0, 44100)`, `__sceSasRevType(0x08B91440, 0xFFFFFFFF [-1])`, `__sceSasRevVON(0x08B91440, 1, 0)`, `__sceSasRevEVOL(0x08B91440, 4096, 4096)`이 모두 `0`으로 성공했다.
+  * `sound_poll_thread`(`uid=0x11`, `prio=18`, `stack=0x8000`)와 `stream_sound_poll_thread`(`uid=0x13`, `prio=18`, `stack=0x8000`)가 순서대로 시작되었고, `sound_poll_thread`가 `__sceSasCore`로 256프레임(무음)을 합성해 `ch2`에 `sceAudioOutputPannedBlocking(2, 0x8000, 0x8000, 0x0896EA00)` 1회를 완료했다.
+* **영상 PRX 로드 및 다음 정지 지점**:
+  * `sceKernelDeleteEventFlag(0xB)`와 `sceGeUnsetCallback(0)` 호출 뒤 `videocodec.prx` (`uid=0x14`), `mpegbase.prx` (`uid=0x15`), `mpeg.prx` (`uid=0x16`)를 순서대로 로드·시작하고, `sceMpeg:sceMpegInit (0x682A619B)`에서 정지했다.
+  * **정지 분류**: `(a) Unimplemented non-kernel NID` (`Exit code: 0`).
+* **화면·GE·컨트롤러·오디오 통계 및 3회 실행 일치**:
+  * Display·GE는 `mode=0 480x272 fb=0x04044000 stride=512 fmt=1 vblanks=2 presented=1 dumped=1`, `2 lists, 282 commands, 0 signals, 2 finishes`, `vertices submitted: 0`, `pixels written: 0`이며, 덤프된 첫 프레임(`480x272` 32bpp)은 아직 드로잉 프리미티브가 없어 0이 아닌 RGB 화소가 `0`개인 검은 화면이다.
+  * `Ctrl: cycle=0 mode=1 produced=2 read=0`, `Audio: reserved=4 output_calls=1 frames_written=256 frames_pulled=2048 underruns=0` (`ch2 calls=1 frames=256 rest=0`), `SAS: instances=1 calls=1 frames=256 keyOn=0 keyOff=0 activeVoices=0 revType=-1 reverb=dry only (not mixed)`, `ATRAC decode: silent | active=0 created=0 released=0 frames=0 samples=0 streamAdded=0 resets=0`.
+  * **3회 연속 실행 일치**: 3회 모두 정지 지점(`sceMpegInit`), GE/Display/Ctrl/Audio/SAS/ATRAC 통계, HLE 호출 횟수 표(`115`항목, `CpuSuspendIntr`/`CpuResumeIntr` 각 `1831`회), 4개 게스트 스레드, 열린 파일 2개(`all.mp`, `all2.mp`), 7개 사용자 파티션 블록이 100% 일치했고, `120`건의 비 `CpuSuspendIntr`/`CpuResumeIntr` 추적 중 실시간 경과를 반영한 `sceKernelGetSystemTimeWide` 반환값(`0x00000DA8`/`0x00000CFA`/`0x00000D47`) 1건만 달랐다.
+
 ---
 
 # GE Initialization and Pre-First-Frame Stop Analysis (`ULKS-46050`, `BOOT.BIN`)
@@ -364,3 +390,29 @@ flowchart TD
   * GE statistics remain `2 lists, 282 commands, 0 signals, 2 finishes`, `vertices submitted: 0`, `pixels written: 0` (same as issue #7). One VBlank latched `0x04044000` (`480x272`, `stride=512`, `fmt=1`, `presented=1`), producing an all-black frame (`0` non-zero RGB pixels) because no draw primitives were issued.
   * **Next stop point**: Class `(a) Unimplemented non-kernel NID` (`Exit code: 0`), `sceAudio:sceAudioChReserve (0x5EC81C55)`.
   * **3-run determinism**: Across 3 consecutive runs, all 124 non-`CpuSuspendIntr`/`CpuResumeIntr` HLE/I/O/ModuleMgr call sequences and arguments, GE/thread/open-file states, and the Class `(a)` stop point matched 100%; only wall-clock-dependent `sceKernelGetSystemTimeWide` return values (`0x0000109D`/`0x00000FDB`/`0x00001038`) and `vblanks`/`Ctrl: produced` counts (`2`/`2`/`3`) varied.
+
+## 5. Post-Audio Progression and Next Stop Point (**Confirmed**)
+
+```mermaid
+flowchart TD
+    S["sceAudioChReserve x4 -> ch0(448), ch1(256), ch2(256), ch3(256)"] --> L["sceAudioSetChannelDataLen: ch2=256, ch1=1024"]
+    L --> SAS["__sceSasInit(0x08B91440, 256, 32, 0, 44100) + __sceSasRevType(-1) + RevVON(1,0) + RevEVOL(4096,4096)"]
+    SAS --> EVF["DcacheWritebackInvalidateAll -> CreateEventFlag('snd_evf', uid=0xF)"]
+    EVF --> TH1["sound_poll_thread(0x11) created/started -> 1st __sceSasCore + sceAudioOutputPannedBlocking(ch2, 256)"]
+    TH1 --> TH2["stream_sound_poll_thread(0x13) created/started -> SetEventFlag(0xF, 4) -> SetGPO(0xFE)"]
+    TH2 --> CLN["DeleteEventFlag(0xB) + sceGeUnsetCallback(0)"]
+    CLN --> PRX["Load & start PRXs: videocodec.prx(0x14), mpegbase.prx(0x15), mpeg.prx(0x16)"]
+    PRX --> END["Stop: sceMpeg:sceMpegInit (0x682A619B)"]
+```
+
+* **Audio channels, SAS init, and thread startup (details in [audio.md](audio.md))**:
+  * `sceAudioChReserve` reserves 4 channels (`ch0=0` `448`, `ch1=1` `256`, `ch2=2` `256`, `ch3=3` `256`), and `sceAudioSetChannelDataLen` sets `ch2=256` and `ch1=1024`.
+  * `__sceSasInit(0x08B91440, 256, 32, 0, 44100)`, `__sceSasRevType(0x08B91440, 0xFFFFFFFF [-1])`, `__sceSasRevVON(0x08B91440, 1, 0)`, and `__sceSasRevEVOL(0x08B91440, 4096, 4096)` all return `0`.
+  * `sound_poll_thread` (`uid=0x11`, `prio=18`, `stack=0x8000`) and `stream_sound_poll_thread` (`uid=0x13`, `prio=18`, `stack=0x8000`) start sequentially, and `sound_poll_thread` completes the first 256-frame `__sceSasCore` mix and `sceAudioOutputPannedBlocking(2, 0x8000, 0x8000, 0x0896EA00)` call.
+* **Video PRX loading and next stop point**:
+  * After `sceKernelDeleteEventFlag(0xB)` and `sceGeUnsetCallback(0)`, `BOOT.BIN` loads and starts `videocodec.prx` (`uid=0x14`), `mpegbase.prx` (`uid=0x15`), and `mpeg.prx` (`uid=0x16`), stopping at `sceMpeg:sceMpegInit (0x682A619B)`.
+  * **Stop class**: `(a) Unimplemented non-kernel NID` (`Exit code: 0`).
+* **Display, GE, controller, audio stats, and 3-run determinism**:
+  * Display/GE stats are `mode=0 480x272 fb=0x04044000 stride=512 fmt=1 vblanks=2 presented=1 dumped=1`, `2 lists, 282 commands, 0 signals, 2 finishes`, `vertices submitted: 0`, `pixels written: 0`; the dumped frame (`480x272`, 32bpp) is solid black (`0` non-zero RGB pixels) as no drawing primitives are emitted yet.
+  * `Ctrl: cycle=0 mode=1 produced=2 read=0`, `Audio: reserved=4 output_calls=1 frames_written=256 frames_pulled=2048 underruns=0` (`ch2 calls=1 frames=256 rest=0`), `SAS: instances=1 calls=1 frames=256 keyOn=0 keyOff=0 activeVoices=0 revType=-1 reverb=dry only (not mixed)`, `ATRAC decode: silent | active=0 created=0 released=0 frames=0 samples=0 streamAdded=0 resets=0`.
+  * **3-run determinism**: Across all 3 runs, the stop NID (`sceMpegInit`), Display/Ctrl/GE/Audio/SAS/ATRAC stats, the `115`-entry HLE call-count table (`1831` `CpuSuspendIntr`/`CpuResumeIntr`), all 4 guest threads, both open files (`all.mp`, `all2.mp`), and all 7 user partition blocks matched 100%; out of `120` non-`CpuSuspendIntr`/`CpuResumeIntr` traces, only the wall-clock `sceKernelGetSystemTimeWide` return value (`0x00000DA8`/`0x00000CFA`/`0x00000D47`) varied.

@@ -2,23 +2,23 @@
 
 이 문서는 사용자가 `redmp1`을 직접 실행해 커널·UMD HLE 부팅 상태와 NID 호출 추적을 확인하는 절차를 설명한다.
 
-* 관련 설계: [20261114-i005-boot.md](../design/20261114-i005-boot.md)
-* 관련 작업 로그: [20261114-i005-boot.md](../work-logs/20261114-i005-boot.md)
+* 관련 설계: [20261114-i011-audio.md](../design/20261114-i011-audio.md)
+* 관련 작업 로그: [20261114-i011-audio.md](../work-logs/20261114-i011-audio.md)
 
 ---
 
 ## 1. 기본 부팅 실행
 
-1. Win64 Release 빌드 후 게임 디렉터리(`roms/`)를 인자로 전달해 실행한다. 창 없이 실행하려면 `--headless`를 붙인다.
+1. Win64 Release 빌드 후 게임 디렉터리(`roms/`)를 인자로 전달해 실행한다. 창 없이 실행하려면 `--headless`를 붙인다(오디오는 더미 풀 클록으로 구동). 제한된 VBlank 수만큼만 실행하려면 `--max-vblanks <N>`을 지정할 수 있다.
    ```powershell
    .\build\win64-release\Release\redmp1.exe roms --variants src\game\dmp1\recomp\variants.json --headless
    ```
 2. 종료 후 출력되는 `[boot] === BOOT STOP REPORT ===`와 종료 코드를 확인한다.
-   * **분류 (a) (종료 코드 `0`)**: 비커널 NID 미구현 지점 도달 또는 정상 종료(`sceKernelExitGame` 포함). 현재 기준은 `sceAudio:sceAudioChReserve (0x5EC81C55)` 정지다.
+   * **분류 (a) (종료 코드 `0`)**: 비커널 NID 미구현 지점 도달 또는 정상 종료(`sceKernelExitGame` 포함). 현재 기준은 `sceMpeg:sceMpegInit (0x682A619B)` 정지다.
 
 ### 기본 컨트롤러 입력 매핑 (`sceCtrl`)
 
-GUI 실행 시 SDL3 UI 스레드가 키보드와 첫 번째 게임패드를 폴링하며, `--headless` 실행 시에는 중립 상태(버튼 `0`, 아날로그 `128, 128`)만 공급한다.
+GUI 실행 시 SDL3 UI 스레드가 키보드·첫 번째 게임패드 폴링과 SDL3 오디오 스트림 출력을 담당하며, `--headless` 실행 시에는 중립 컨트롤러 상태(버튼 `0`, 아날로그 `128, 128`)와 더미 오디오 클록만 공급한다.
 
 | PSP 입력 | 키보드 | 게임패드 (SDL3 1번 패드) |
 | --- | --- | --- |
@@ -29,6 +29,8 @@ GUI 실행 시 SDL3 UI 스레드가 키보드와 첫 번째 게임패드를 폴�
 | Analog Stick (`lx`, `ly`) | `I` / `J` / `K` / `L` | Left Stick X / Y |
    * **분류 (b) (종료 코드 `10` 또는 `11`)**: 커널 NID 미구현 또는 예기치 않은 런타임/HLE 정지.
    * **분류 (c) (종료 코드 `12`)**: CPU 폴트 또는 호스트 예외.
+   * **분류 (e) (종료 코드 `0`)**: `--max-vblanks <N>` 상한 도달 정지.
+   * 정지 보고서 하단에는 `Display:`, `Ctrl:`, `GE:`, `Audio:`, `SAS:`, `ATRAC decode:` 통계 줄이 출력된다.
 3. 프레임버퍼가 latch된 프레임을 BMP로 저장하려면 `REPSP_FRAME_DUMP=<디렉터리>`와 `REPSP_FRAME_DUMP_LIMIT=<N>`을 설정한다.
 
 ---
@@ -55,8 +57,8 @@ $env:REPSP_HLE_TRACE = "1"
 
 This guide describes how to run `redmp1` to inspect kernel/UMD HLE boot behavior and trace NID calls.
 
-* Related design: [20261114-i005-boot.md](../design/20261114-i005-boot.md)
-* Related work log: [20261114-i005-boot.md](../work-logs/20261114-i005-boot.md)
+* Related design: [20261114-i011-audio.md](../design/20261114-i011-audio.md)
+* Related work log: [20261114-i011-audio.md](../work-logs/20261114-i011-audio.md)
 
 ## 1. Default Boot Execution
 
@@ -64,12 +66,12 @@ This guide describes how to run `redmp1` to inspect kernel/UMD HLE boot behavior
 .\build\win64-release\Release\redmp1.exe roms --variants src\game\dmp1\recomp\variants.json --headless
 ```
 
-Check `[boot] === BOOT STOP REPORT ===` and the exit code:
-* **Class (a) (`0`)**: Stopped at an unimplemented non-kernel NID (currently `sceAudio:sceAudioChReserve (0x5EC81C55)`) or exited cleanly (`sceKernelExitGame`).
+Pass `--max-vblanks <N>` to stop deterministically after `N` VBlanks (audio uses a dummy pull clock under `--headless`, whereas windowed mode opens the SDL3 audio stream). Check `[boot] === BOOT STOP REPORT ===` and the exit code:
+* **Class (a) (`0`)**: Stopped at an unimplemented non-kernel NID (currently `sceMpeg:sceMpegInit (0x682A619B)`) or exited cleanly (`sceKernelExitGame`).
 
 ### Default Controller Input Mapping (`sceCtrl`)
 
-In GUI mode the SDL3 UI thread polls keyboard input and Gamepad #0; under `--headless` only neutral controller state (buttons `0`, analog `128, 128`) is supplied.
+In GUI mode the SDL3 UI thread polls keyboard input and Gamepad #0 alongside the SDL3 audio stream; under `--headless` only neutral controller state (buttons `0`, analog `128, 128`) and the dummy audio pull clock are supplied.
 
 | PSP Input | Keyboard | Gamepad (SDL3 Pad #0) |
 | --- | --- | --- |
@@ -80,6 +82,8 @@ In GUI mode the SDL3 UI thread polls keyboard input and Gamepad #0; under `--hea
 | Analog Stick (`lx`, `ly`) | `I` / `J` / `K` / `L` | Left Stick X / Y |
 * **Class (b) (`10` or `11`)**: Unimplemented kernel NID or unexpected runtime/HLE stop.
 * **Class (c) (`12`)**: CPU fault or host exception.
+* **Class (e) (`0`)**: Reached VBlank limit (`--max-vblanks <N>`).
+* The stop report prints `Display:`, `Ctrl:`, `GE:`, `Audio:`, `SAS:`, and `ATRAC decode:` summary lines.
 
 Set `REPSP_FRAME_DUMP=<dir>` and `REPSP_FRAME_DUMP_LIMIT=<N>` to dump latched frames as BMP files.
 
