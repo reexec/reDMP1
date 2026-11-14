@@ -1,0 +1,13 @@
+diff --git a/tools/allegrexrecomp/emit.c b/tools/allegrexrecomp/emit.c
+--- a/tools/allegrexrecomp/emit.c
++++ b/tools/allegrexrecomp/emit.c
+@@ -788,7 +788,8 @@
+         a_decode(fetch(an, a), a, &in);
+ 
+         if (c->is_label[i]) fprintf(f, "L_%08X: PSP_MARK(0x%08Xu);\n", a, a);
+-        last_terminal = in.is_return || in.is_indirect ||
++        last_terminal = in.is_return ||
++                        (in.is_indirect && !in.is_call) ||
+                         (in.is_jump && !in.is_call);
+         comment(c, &in);
+ 

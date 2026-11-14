@@ -30,6 +30,11 @@ This directory maintains local patches applied to `third_party/psprecomp` (targe
      - Fixes handling of `ofsbase` and `addrbase` segment indices in `psp_collect_pointer_seeds` (`container.c`).
      - Skips the non-relocated `lui+addiu`/`ori` immediate scan in `analyze.c` when `an->image` is present on PRX modules, preventing un-relocated constants from colliding with `.text` bounds at base 0 and ensuring exact lift invariance across base addresses.
 
+3. **`0003-jalr-fallthrough.patch`**
+   - **설명 / Description**:
+     - `emit.c`에서 `last_terminal` 판정 시 `in.is_indirect`를 `in.is_call` 여부와 무관하게 terminal로 간주하던 문제를 수정하여, `jalr`(`is_indirect && is_call`)로 끝난 뒤 다음 함수나 레이블로 이어지는 경우 fall-through 호출이 누락되지 않도록 합니다.
+     - Fixes `last_terminal` in `emit.c` so `jalr` (`in.is_indirect && in.is_call`) is not treated as terminal like `jr`, preserving fall-through calls into the following function or label when a body ends at `jalr`.
+
 ---
 
 ## 업스트림 PR 초안 / Draft Upstream Pull Request

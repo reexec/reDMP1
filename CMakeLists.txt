@@ -32,6 +32,7 @@ find_package(Git REQUIRED)
 set(ALLEGREXRECOMP_PATCHES
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/psprecomp/0001-relocate-prx-at-base.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/psprecomp/0002-seed-harvest-segment-bases.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/psprecomp/0003-jalr-fallthrough.patch"
 )
 
 foreach(patch IN LISTS ALLEGREXRECOMP_PATCHES)
@@ -62,11 +63,14 @@ else()
 endif()
 
 # 3. psprecomp ABI adapter target
+option(REDMP1_TRACE_GUEST "Enable guest function entry tracing (zero cost when OFF)" OFF)
+
 add_library(redmp1_recomp_abi STATIC
     src/recomp_abi/cpu.c
     src/recomp_abi/mem.c
     src/recomp_abi/dispatch.c
     src/recomp_abi/trap.c
+    src/recomp_abi/trace.c
     src/recomp_abi/vfpu.c
 )
 target_include_directories(redmp1_recomp_abi PUBLIC
@@ -101,8 +105,10 @@ target_link_libraries(redmp1_game PUBLIC
 repsp_apply_host_flags(redmp1_game)
 
 # 5. Generated recompiled game code library (conditional on generated/ presence)
+set(REDMP1_GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/generated"
+    CACHE PATH "Directory containing generated recompiled C sources")
 file(GLOB REDMP1_RECOMP_SRCS
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/generated/*.c"
+    "${REDMP1_GENERATED_DIR}/*.c"
 )
 
 if(REDMP1_RECOMP_SRCS)
@@ -110,12 +116,15 @@ if(REDMP1_RECOMP_SRCS)
         ${REDMP1_RECOMP_SRCS}
     )
     target_include_directories(redmp1_recomp PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/generated>
+        $<BUILD_INTERFACE:${REDMP1_GENERATED_DIR}>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/psprecomp/include>
     )
     target_link_libraries(redmp1_recomp PUBLIC
         redmp1_recomp_abi
     )
+    if(REDMP1_TRACE_GUEST)
+        target_compile_definitions(redmp1_recomp PRIVATE PSPRECOMP_TRACE)
+    endif()
     if(MSVC)
         target_compile_options(redmp1_recomp PRIVATE /W0 /MP /utf-8 /bigobj)
         target_compile_definitions(redmp1_recomp PRIVATE _CRT_SECURE_NO_WARNINGS)
