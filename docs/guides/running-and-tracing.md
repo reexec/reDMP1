@@ -10,6 +10,8 @@
 ## 1. 기본 부팅 실행
 
 1. Win64 Release 빌드 후 게임 디렉터리(`roms/`)를 인자로 전달해 실행한다. 창 없이 실행하려면 `--headless`를 붙인다(오디오는 더미 풀 클록으로 구동). 제한된 VBlank 수만큼만 실행하려면 `--max-vblanks <N>`을 지정하며, 정해진 VBlank 시점에 컨트롤러 입력을 주입하려면 `--input-script <파일>`을 사용한다.
+   * `--renderer <sw|gl>`: 렌더 백엔드를 선택한다(기본값 `sw`). `gl`은 OpenGL 3.3 Core 백엔드를 사용하며, GL 문맥 생성에 실패하면 1줄 경고를 남기고 `sw`로 폴백한다. `--headless --renderer gl`은 숨김 창으로 GL 문맥을 만들어 실행한다.
+   * `--scale <1..8>`: 창 배율(기본값 `2`)을 지정한다. `--renderer gl`에서는 내부 FBO 해상도(`480*scale × 272*scale`)에도 동일하게 적용된다.
    * `--save-dir <디렉터리>`: `ms0:/PSP/SAVEDATA`에 연결할 호스트 세이브 디렉터리를 지정한다. 생략하면 OS 사용자 데이터 디렉터리(`SDL_GetPrefPath` 기반) 아래 `savedata/`를 사용한다.
    * `--dialog-answer <yes|no>`: 그리지 않는 Yes/No 메시지 다이얼로그의 응답을 지정한다(기본값 `yes`).
    ```powershell
@@ -32,8 +34,8 @@ GUI 실행 시 SDL3 UI 스레드가 키보드·첫 번째 게임패드 폴링과
    * **분류 (b) (종료 코드 `10` 또는 `11`)**: 커널 NID 미구현 또는 예기치 않은 런타임/HLE 정지.
    * **분류 (c) (종료 코드 `12`)**: CPU 폴트 또는 호스트 예외.
    * **분류 (e) (종료 코드 `0`)**: `--max-vblanks <N>` 상한 도달 정지.
-   * 정지 보고서 하단에는 `Display:`, `Ctrl:`, `GE:`, `Audio:`, `SAS:`, `ATRAC decode:`, `AVC decode:`, `Utility:`, `Dialog[i]:` 통계 줄이 출력된다.
-3. 프레임버퍼가 latch된 프레임을 BMP로 저장하려면 `REPSP_FRAME_DUMP=<디렉터리>`와 `REPSP_FRAME_DUMP_LIMIT=<N>`을 설정한다.
+   * 정지 보고서 하단에는 `Renderer:`, `OpenGL:`(`gl` 활성 시), `Present:`, `Display:`, `Ctrl:`, `GE:`, `Audio:`, `SAS:`, `ATRAC decode:`, `AVC decode:`, `Utility:`, `Dialog[i]:` 통계 줄이 출력된다.
+3. 프레임버퍼가 latch된 프레임을 BMP로 저장하려면 `REPSP_FRAME_DUMP=<디렉터리>`와 `REPSP_FRAME_DUMP_LIMIT=<N>`을 설정한다(`--renderer gl`에서도 배율 1로 readback해 저장). 두 BMP의 픽셀 차이를 비교하려면 `python tools/compare_bmp.py <a.bmp> <b.bmp> [--tol 1] [--diff-out diff.bmp]`를 사용한다.
 
 ### `--input-script <파일>` 형식
 
@@ -84,7 +86,7 @@ This guide describes how to run `redmp1` to inspect kernel/UMD HLE boot behavior
 .\build\win64-release\Release\redmp1.exe roms --variants src\game\dmp1\recomp\variants.json --headless --max-vblanks 120
 ```
 
-Pass `--max-vblanks <N>` to stop deterministically after `N` VBlanks, `--input-script <path>` to inject timed controller state, `--save-dir <dir>` to override the host `ms0:/PSP/SAVEDATA` directory (defaults to `savedata/` under `SDL_GetPrefPath`), and `--dialog-answer <yes|no>` to answer undrawn yes/no message dialogs (default `yes`). Under `--headless`, audio uses a dummy pull clock, whereas windowed mode opens the SDL3 audio stream. Check `[boot] === BOOT STOP REPORT ===` and the exit code:
+Pass `--max-vblanks <N>` to stop deterministically after `N` VBlanks, `--renderer <sw|gl>` to select the render backend (`sw` default; `gl` uses OpenGL 3.3 Core and falls back to `sw` with a 1-line warning if GL context creation fails; `--headless --renderer gl` uses a hidden GL window), `--scale <1..8>` to set window scale and GL internal FBO resolution (`480*scale x 272*scale`, default `2`), `--input-script <path>` to inject timed controller state, `--save-dir <dir>` to override the host `ms0:/PSP/SAVEDATA` directory (defaults to `savedata/` under `SDL_GetPrefPath`), and `--dialog-answer <yes|no>` to answer undrawn yes/no message dialogs (default `yes`). Under `--headless`, audio uses a dummy pull clock, whereas windowed mode opens the SDL3 audio stream. Check `[boot] === BOOT STOP REPORT ===` and the exit code:
 * **Class (a) (`0`)**: Stopped at an unimplemented non-kernel NID or exited cleanly (`sceKernelExitGame`). After skipping the opening movie with `--input-script`, execution proceeds past `sceUtilitySavedata`/`MsgDialog` into the title screen until `--max-vblanks`.
 
 ### Default Controller Input Mapping (`sceCtrl`)
@@ -101,9 +103,9 @@ In GUI mode the SDL3 UI thread polls keyboard input and Gamepad #0 alongside the
 * **Class (b) (`10` or `11`)**: Unimplemented kernel NID or unexpected runtime/HLE stop.
 * **Class (c) (`12`)**: CPU fault or host exception.
 * **Class (e) (`0`)**: Reached VBlank limit (`--max-vblanks <N>`).
-* The stop report prints `Display:`, `Ctrl:`, `GE:`, `Audio:`, `SAS:`, `ATRAC decode:`, `AVC decode:`, `Utility:`, and `Dialog[i]:` summary lines.
+* The stop report prints `Renderer:`, `OpenGL:` (when `gl` is active), `Present:`, `Display:`, `Ctrl:`, `GE:`, `Audio:`, `SAS:`, `ATRAC decode:`, `AVC decode:`, `Utility:`, and `Dialog[i]:` summary lines.
 
-Set `REPSP_FRAME_DUMP=<dir>` and `REPSP_FRAME_DUMP_LIMIT=<N>` to dump latched frames as BMP files.
+Set `REPSP_FRAME_DUMP=<dir>` and `REPSP_FRAME_DUMP_LIMIT=<N>` to dump latched frames as BMP files (reads back at scale 1 when `--renderer gl` is active). To compare two BMP dumps pixel-by-pixel, run `python tools/compare_bmp.py <a.bmp> <b.bmp> [--tol 1] [--diff-out diff.bmp]`.
 
 ### `--input-script <path>` Format
 

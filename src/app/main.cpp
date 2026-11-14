@@ -14,10 +14,13 @@
 
 #if REDMP1_HAVE_RECOMP
 #include <atomic>
+#include <chrono>
+#include <iomanip>
 #include "recomp_abi.h"
 #include <psprecomp/cpu.h>
 #include <psprecomp/dispatch.h>
 #include <repsp/codec/loader.h>
+#include <repsp/gpu/render_backend.h>
 #include <repsp/hle/atrac.h>
 #include <repsp/hle/audio.h>
 #include <repsp/hle/ctrl.h>
@@ -60,6 +63,8 @@ void PrintUsage(const char* prog)
               << "Options:\n"
               << "  --variants <path>      Path to variants.json (default: search adjacent/source)\n"
               << "  --headless             Run without opening a display window\n"
+              << "  --renderer <sw|gl>     Select render backend (default: sw)\n"
+              << "  --scale <n>            Window scale 1..8, and GL internal scale (default: 2)\n"
               << "  --max-vblanks <n>      Stop execution after <n> VBlanks (0 = unlimited)\n"
               << "  --input-script <path>  Deterministic controller script (<vblank> <button names>)\n"
               << "  --save-dir <path>      Directory for sceUtility savedata slots (default: user data/savedata)\n"
@@ -357,6 +362,8 @@ bool IsKernelLibrary(const std::string& lib)
 int RunBoot(const std::filesystem::path& game_dir,
             const redmp1::IdentifyResult& idResult,
             bool headless,
+            bool use_gl,
+            int scale,
             uint32_t max_vblanks,
             const std::filesystem::path& input_script_path,
             const std::filesystem::path& save_dir,
@@ -410,18 +417,32 @@ int RunBoot(const std::filesystem::path& game_dir,
     std::filesystem::create_directories(ms0_dir, ec);
 
     repsp::platform::PlatformConfig plat_cfg;
-    plat_cfg.headless = headless;
-    plat_cfg.display.width = 480 * 2;
-    plat_cfg.display.height = 272 * 2;
+    plat_cfg.headless = headless && !use_gl;
+    plat_cfg.display.width = 480 * scale;
+    plat_cfg.display.height = 272 * scale;
     plat_cfg.display.title = "reDMP1 - DJMAX Portable";
-    plat_cfg.display.dummy = headless;
+    plat_cfg.display.dummy = headless && !use_gl;
+    plat_cfg.display.use_opengl = use_gl;
+    plat_cfg.display.hidden = headless && use_gl;
     plat_cfg.audio.dummy = headless;
-    if (!repsp::platform::Initialize(plat_cfg) && !headless)
+    if (!repsp::platform::Initialize(plat_cfg) && (!headless || use_gl))
     {
-        plat_cfg.headless = true;
-        plat_cfg.display.dummy = true;
-        plat_cfg.audio.dummy = true;
-        repsp::platform::Initialize(plat_cfg);
+        if (use_gl)
+        {
+            std::cerr << "[redmp1] OpenGL context initialization failed; falling back to software renderer.\n";
+            use_gl = false;
+        }
+        plat_cfg.headless = headless;
+        plat_cfg.display.dummy = headless;
+        plat_cfg.display.use_opengl = false;
+        plat_cfg.display.hidden = false;
+        if (!repsp::platform::Initialize(plat_cfg) && !headless)
+        {
+            plat_cfg.headless = true;
+            plat_cfg.display.dummy = true;
+            plat_cfg.audio.dummy = true;
+            repsp::platform::Initialize(plat_cfg);
+        }
     }
 
     repsp::hle::kernel::KernelConfig cfg;
@@ -444,9 +465,16 @@ int RunBoot(const std::filesystem::path& game_dir,
 
     repsp::hle::display::DisplayHleConfig disp_cfg;
     disp_cfg.headless = headless;
-    disp_cfg.scale = 2;
+    disp_cfg.scale = scale;
+    disp_cfg.use_opengl = use_gl;
+    disp_cfg.internal_scale = use_gl ? scale : 1;
     disp_cfg.window_title = "reDMP1 - DJMAX Portable";
     repsp::hle::display::Register(disp_cfg);
+    if (use_gl && repsp::gpu::GetRenderBackend() != &repsp::gpu::kOpenGlBackend)
+    {
+        std::cerr << "[redmp1] OpenGL backend selection failed; using software renderer.\n";
+        use_gl = false;
+    }
     repsp::hle::ctrl::Register();
     if (!input_script.empty())
     {
@@ -555,6 +583,35 @@ int RunBoot(const std::filesystem::path& game_dir,
         return 1;
     }
 
+    uint64_t prev_presented = 0;
+    auto prev_present_tp = std::chrono::steady_clock::now();
+    bool has_prev_present = false;
+    uint64_t interval_count = 0;
+    double interval_sum_ms = 0.0;
+    double interval_max_ms = 0.0;
+    uint32_t present_timer_sub_id = repsp::runtime::GetVblankClock().Subscribe(
+        [&](uint32_t)
+        {
+            const uint64_t cur = repsp::hle::display::GetStats().frames_presented;
+            if (cur > prev_presented)
+            {
+                const auto now = std::chrono::steady_clock::now();
+                if (has_prev_present)
+                {
+                    const double ms = std::chrono::duration<double, std::milli>(now - prev_present_tp).count();
+                    interval_sum_ms += ms;
+                    if (ms > interval_max_ms)
+                    {
+                        interval_max_ms = ms;
+                    }
+                    ++interval_count;
+                }
+                prev_present_tp = now;
+                prev_presented = cur;
+                has_prev_present = true;
+            }
+        });
+
     std::atomic<bool> vblank_limit_triggered{false};
     uint32_t vblank_limit_sub_id = 0;
     if (max_vblanks > 0)
@@ -583,7 +640,16 @@ int RunBoot(const std::filesystem::path& game_dir,
     {
         repsp::runtime::GetVblankClock().Unsubscribe(vblank_limit_sub_id);
     }
+    if (present_timer_sub_id != 0)
+    {
+        repsp::runtime::GetVblankClock().Unsubscribe(present_timer_sub_id);
+    }
 
+    const std::string renderer_name = repsp::gpu::GetRenderBackend()->name
+        ? repsp::gpu::GetRenderBackend()->name
+        : "unknown";
+    const auto gl_stats = repsp::gpu::GetOpenGlStats();
+    const auto disp_stats_struct = repsp::hle::display::GetStats();
     const std::string ge_stats = repsp::hle::ge::FormatStats();
     const std::string disp_stats = repsp::hle::display::FormatStats();
     const std::string ctrl_stats = repsp::hle::ctrl::FormatStats();
@@ -662,6 +728,22 @@ int RunBoot(const std::filesystem::path& game_dir,
     }
     std::cout << "  Dispatches:  " << psp_dispatch_calls() << "\n"
               << "  Exit code:   " << exit_code << "\n"
+              << "  Renderer:    " << renderer_name << " (scale=" << scale << ")\n";
+    if (renderer_name == "opengl")
+    {
+        std::cout << "  OpenGL:      draws=" << gl_stats.draw_calls
+                  << " fbo_switches=" << gl_stats.fbo_switches
+                  << " tex_uploads=" << gl_stats.texture_uploads
+                  << " tex_hits=" << gl_stats.texture_cache_hits
+                  << " approx_blends=" << gl_stats.approximated_blends
+                  << " cpu_overlaps=" << gl_stats.cpu_write_overlaps
+                  << " unsupported=" << gl_stats.unsupported_ops << "\n";
+    }
+    const double mean_ms = (interval_count > 0) ? (interval_sum_ms / static_cast<double>(interval_count)) : 0.0;
+    std::cout << std::fixed << std::setprecision(2)
+              << "  Present:     " << disp_stats_struct.frames_presented
+              << " frames (interval mean=" << mean_ms << " ms, max=" << interval_max_ms << " ms)\n"
+              << std::defaultfloat
               << "  " << disp_stats
               << "  " << ctrl_stats
               << "  " << ge_stats
@@ -733,6 +815,8 @@ int main(int argc, char* argv[])
     bool dialog_answer_yes = true;
     bool lift_check = false;
     bool headless = false;
+    bool use_gl = false;
+    int scale = 2;
     uint32_t max_vblanks = 0;
 
     for (int i = 2; i < argc; ++i)
@@ -804,6 +888,45 @@ int main(int argc, char* argv[])
         {
             headless = true;
         }
+        else if (opt == "--renderer")
+        {
+            if (i + 1 >= argc)
+            {
+                std::cerr << "Error: --renderer requires 'sw' or 'gl'.\n";
+                return 1;
+            }
+            std::string r = argv[++i];
+            if (r == "sw" || r == "software")
+            {
+                use_gl = false;
+            }
+            else if (r == "gl" || r == "opengl")
+            {
+                use_gl = true;
+            }
+            else
+            {
+                std::cerr << "Error: Invalid --renderer value: " << r << " (expected 'sw' or 'gl')\n";
+                return 1;
+            }
+        }
+        else if (opt == "--scale")
+        {
+            if (i + 1 >= argc)
+            {
+                std::cerr << "Error: --scale requires an integer argument (1..8).\n";
+                return 1;
+            }
+            const char* raw = argv[++i];
+            char* end_ptr = nullptr;
+            long parsed = std::strtol(raw, &end_ptr, 10);
+            if (raw[0] == '\0' || end_ptr == nullptr || *end_ptr != '\0' || parsed < 1 || parsed > 8)
+            {
+                std::cerr << "Error: Invalid --scale value: " << raw << " (expected 1..8)\n";
+                return 1;
+            }
+            scale = static_cast<int>(parsed);
+        }
         else if (opt == "--max-vblanks")
         {
             if (i + 1 >= argc)
@@ -861,12 +984,14 @@ int main(int argc, char* argv[])
     }
 
 #if REDMP1_HAVE_RECOMP
-    return RunBoot(game_dir, result, headless, max_vblanks, input_script_path, save_dir,
+    return RunBoot(game_dir, result, headless, use_gl, scale, max_vblanks, input_script_path, save_dir,
                    dialog_answer_yes ? repsp::hle::utility::DialogAnswer::kYes
                                      : repsp::hle::utility::DialogAnswer::kNo,
                    codec_plugin_path, no_codec_plugin);
 #else
     (void)headless;
+    (void)use_gl;
+    (void)scale;
     (void)max_vblanks;
     (void)input_script_path;
     (void)save_dir;
