@@ -269,6 +269,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/SYSDIR/BOOT.BIN" AND REDMP1
                 --headless
     )
     set_tests_properties(app_boot PROPERTIES
-        PASS_REGULAR_EXPRESSION "Class:[ \t]*\\(a\\)"
+        PASS_REGULAR_EXPRESSION "Class:[ \t]*\\(a\\).*sceCtrlSetSamplingMode"
     )
 endif()
