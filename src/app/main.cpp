@@ -1,5 +1,6 @@
 #include "redmp1/dmp1_profile.h"
 
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -8,22 +9,28 @@
 #include <vector>
 
 #if REDMP1_HAVE_RECOMP
+#include <atomic>
 #include "recomp_abi.h"
 #include <psprecomp/cpu.h>
 #include <psprecomp/dispatch.h>
+#include <repsp/hle/atrac.h>
+#include <repsp/hle/audio.h>
 #include <repsp/hle/ctrl.h>
 #include <repsp/hle/display.h>
 #include <repsp/hle/dmac.h>
 #include <repsp/hle/ge.h>
 #include <repsp/hle/kernel.h>
+#include <repsp/hle/sascore.h>
 #include <repsp/platform/guarded_run.h>
 #include <repsp/platform/path.h>
+#include <repsp/platform/platform.h>
 #include <repsp/recomp/guest_cpu.h>
 #include <repsp/runtime/guest_memory.h>
 #include <repsp/runtime/nid_names.h>
 #include <repsp/runtime/nid_registry.h>
 #include <repsp/runtime/prx_loader.h>
 #include <repsp/runtime/scheduler.h>
+#include <repsp/runtime/vblank_clock.h>
 
 extern "C" void psp_recomp_register(void);
 extern "C" uint64_t psp_dispatch_calls(void);
@@ -44,6 +51,7 @@ void PrintUsage(const char* prog)
               << "Options:\n"
               << "  --variants <path>      Path to variants.json (default: search adjacent/source)\n"
               << "  --headless             Run without opening a display window\n"
+              << "  --max-vblanks <n>      Stop execution after <n> VBlanks (0 = unlimited)\n"
               << "  --lift-check           Execute recompiled code up to the first firmware call\n"
               << "  --help, -h             Show this help message\n"
               << "  --version, -v          Show version\n";
@@ -230,7 +238,10 @@ bool IsKernelLibrary(const std::string& lib)
     return false;
 }
 
-int RunBoot(const std::filesystem::path& game_dir, const redmp1::IdentifyResult& idResult, bool headless)
+int RunBoot(const std::filesystem::path& game_dir,
+            const redmp1::IdentifyResult& idResult,
+            bool headless,
+            uint32_t max_vblanks)
 {
     uint32_t base = 0x08804000u;
     std::filesystem::path exe_path = game_dir / "PSP_GAME" / "SYSDIR" / idResult.executable_name;
@@ -268,6 +279,21 @@ int RunBoot(const std::filesystem::path& game_dir, const redmp1::IdentifyResult&
     std::error_code ec;
     std::filesystem::create_directories(ms0_dir, ec);
 
+    repsp::platform::PlatformConfig plat_cfg;
+    plat_cfg.headless = headless;
+    plat_cfg.display.width = 480 * 2;
+    plat_cfg.display.height = 272 * 2;
+    plat_cfg.display.title = "reDMP1 - DJMAX Portable";
+    plat_cfg.display.dummy = headless;
+    plat_cfg.audio.dummy = headless;
+    if (!repsp::platform::Initialize(plat_cfg) && !headless)
+    {
+        plat_cfg.headless = true;
+        plat_cfg.display.dummy = true;
+        plat_cfg.audio.dummy = true;
+        repsp::platform::Initialize(plat_cfg);
+    }
+
     repsp::hle::kernel::KernelConfig cfg;
     cfg.mounts = {
         {"disc0", game_dir, true},
@@ -293,6 +319,9 @@ int RunBoot(const std::filesystem::path& game_dir, const redmp1::IdentifyResult&
     repsp::hle::display::Register(disp_cfg);
     repsp::hle::ctrl::Register();
     repsp::hle::dmac::Register();
+    repsp::hle::audio::Register();
+    repsp::hle::sascore::Register();
+    repsp::hle::atrac::Register();
 
     repsp::runtime::Scheduler& sched = repsp::runtime::GetScheduler();
     int32_t entry_tid = sched.CreateThread(
@@ -305,7 +334,28 @@ int RunBoot(const std::filesystem::path& game_dir, const redmp1::IdentifyResult&
     if (entry_tid < 0)
     {
         std::cerr << "[boot] Error: CreateThread failed: 0x" << std::hex << entry_tid << std::dec << "\n";
+        repsp::hle::atrac::Shutdown();
+        repsp::hle::sascore::Shutdown();
+        repsp::hle::audio::Shutdown();
+        repsp::hle::ctrl::Shutdown();
+        repsp::hle::dmac::Shutdown();
+        repsp::hle::display::Shutdown();
+        repsp::platform::Shutdown();
         return 1;
+    }
+
+    std::atomic<bool> vblank_limit_triggered{false};
+    uint32_t vblank_limit_sub_id = 0;
+    if (max_vblanks > 0)
+    {
+        vblank_limit_sub_id = repsp::runtime::GetVblankClock().Subscribe(
+            [&sched, &vblank_limit_triggered, max_vblanks](uint32_t vcount)
+            {
+                if (vcount >= max_vblanks && !vblank_limit_triggered.exchange(true))
+                {
+                    sched.RequestStop("Reached VBlank limit (--max-vblanks)");
+                }
+            });
     }
 
     repsp::runtime::GetNidRegistry().SetStopOnUnimplemented(true);
@@ -318,13 +368,24 @@ int RunBoot(const std::filesystem::path& game_dir, const redmp1::IdentifyResult&
     });
 
     repsp::runtime::GetNidRegistry().SetStopOnUnimplemented(false);
+    if (vblank_limit_sub_id != 0)
+    {
+        repsp::runtime::GetVblankClock().Unsubscribe(vblank_limit_sub_id);
+    }
 
     const std::string ge_stats = repsp::hle::ge::FormatStats();
     const std::string disp_stats = repsp::hle::display::FormatStats();
     const std::string ctrl_stats = repsp::hle::ctrl::FormatStats();
+    const std::string audio_stats = repsp::hle::audio::FormatStats();
+    const std::string sas_stats = repsp::hle::sascore::FormatStats();
+    const std::string atrac_stats = repsp::hle::atrac::FormatStats();
+    repsp::hle::atrac::Shutdown();
+    repsp::hle::sascore::Shutdown();
+    repsp::hle::audio::Shutdown();
     repsp::hle::ctrl::Shutdown();
     repsp::hle::dmac::Shutdown();
     repsp::hle::display::Shutdown();
+    repsp::platform::Shutdown();
 
     int exit_code = 0;
     std::cout << "\n[boot] === BOOT STOP REPORT ===\n";
@@ -350,6 +411,12 @@ int RunBoot(const std::filesystem::path& game_dir, const redmp1::IdentifyResult&
                       << "  NID:         " << formatted_nid << "\n"
                       << "  Reason:      " << guard_res.stop_reason << "\n";
             exit_code = is_kernel ? 10 : 0;
+        }
+        else if (guard_res.stop_reason.find("Reached VBlank limit") != std::string::npos)
+        {
+            std::cout << "  Class:       (e) VBlank limit reached (--max-vblanks)\n"
+                      << "  Reason:      " << guard_res.stop_reason << "\n";
+            exit_code = 0;
         }
         else if (guard_res.stop_reason.find("sceKernelExitGame") != std::string::npos)
         {
@@ -380,6 +447,9 @@ int RunBoot(const std::filesystem::path& game_dir, const redmp1::IdentifyResult&
               << "  " << disp_stats
               << "  " << ctrl_stats
               << "  " << ge_stats
+              << "  Audio:       " << audio_stats << "\n"
+              << "  " << sas_stats << "\n"
+              << "  " << atrac_stats << "\n"
               << "==============================\n";
 
     repsp::hle::kernel::PrintKernelSummary();
@@ -438,6 +508,7 @@ int main(int argc, char* argv[])
     std::filesystem::path variants_path;
     bool lift_check = false;
     bool headless = false;
+    uint32_t max_vblanks = 0;
 
     for (int i = 2; i < argc; ++i)
     {
@@ -453,6 +524,23 @@ int main(int argc, char* argv[])
         else if (opt == "--headless")
         {
             headless = true;
+        }
+        else if (opt == "--max-vblanks")
+        {
+            if (i + 1 >= argc)
+            {
+                std::cerr << "Error: --max-vblanks requires a numeric argument.\n";
+                return 1;
+            }
+            const char* raw = argv[++i];
+            char* end_ptr = nullptr;
+            unsigned long parsed = std::strtoul(raw, &end_ptr, 10);
+            if (raw[0] == '\0' || raw[0] == '-' || end_ptr == nullptr || *end_ptr != '\0')
+            {
+                std::cerr << "Error: Invalid --max-vblanks value: " << raw << "\n";
+                return 1;
+            }
+            max_vblanks = static_cast<uint32_t>(parsed);
         }
     }
 
@@ -494,9 +582,10 @@ int main(int argc, char* argv[])
     }
 
 #if REDMP1_HAVE_RECOMP
-    return RunBoot(game_dir, result, headless);
+    return RunBoot(game_dir, result, headless, max_vblanks);
 #else
     (void)headless;
+    (void)max_vblanks;
     return 0;
 #endif
 }
