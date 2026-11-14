@@ -43,10 +43,11 @@ flowchart TD
    * `mem.c`: `psp_read8/16/32/64`, `psp_write8/16/32/64` 인라인 메모리 접근자를 `repsp_guest_read*`, `repsp_guest_write*`에 매핑.
    * `dispatch.c`: 재컴파일된 함수 디스패치 테이블 및 `psp_dispatch_call` 라우팅. 초기 설계에서는 게스트 주소 기반 평면 배열(flat array) 색인을 검토했으나, `psprecomp` ABI 구현과의 정합성과 메모리 효율·등록 단순성을 위해 `psprecomp`의 개방 주소 지정(open-addressed) 해시 테이블을 유지한다. 향후 프로파일링에서 간접 호출 디스패치 오버헤드가 병목으로 확인되는 경우에만 평면 배열로 전환한다.
    * `trap.c`: `psp_hle_call`, `psp_syscall`, `psp_unimplemented` 처리. 디스패치 미스 및 `psp_unimplemented` 발생 시 `repsp_raise_stop`을 통해 `GuardedRun`으로 제어를 반환한다.
+   * `trace.c`: `REDMP1_TRACE_GUEST=ON` 빌드 시 `REDMP1_TRACE_REFCOUNT=1`로 `CInstance`/`Holder`/`List` 및 게스트 `__assert`를 추적한다(`OFF`가 기본값).
    * `vfpu.c`: psprecomp가 생성하는 VFPU 전치, 행렬 연산 매크로 도우미.
    * **`repsp`는 `psprecomp`에 의존하지 않으며**, 어댑터는 reDMP1 내부에 위치함.
-4. **`recomp` (`src/game/dmp1/recomp/generated/`, 타깃 `redmp1_recomp`)**:
-   * `allegrexrecomp emit`으로 기계적으로 생성된 8,784개 함수의 C 구현체(138개 번들 번역 단위 `dmp1_funcs_000..137.c` + `dmp1_imports.c` + `dmp1_register.c`).
+4. **`recomp` (`src/game/dmp1/recomp/generated/` 또는 `-DREDMP1_GENERATED_DIR`, 타깃 `redmp1_recomp`)**:
+   * `allegrexrecomp emit`으로 기계적으로 생성된 8,785개 함수(17,215개 내부 진입점)의 C 구현체(`dmp1_funcs_*.c` + `dmp1_imports.c` + `dmp1_register.c`).
    * `redmp1_recomp_abi`를 통해 런타임과 연결되며, `redmp1` 실행 파일에 정적 라이브러리로 링크.
 5. **`repsp` (`third_party/repsp`, 공유 서브모듈)**:
    * 타이틀 중립적이며 독립적으로 재사용 가능한 PSP 런타임 라이브러리.
@@ -75,12 +76,12 @@ flowchart LR
    * 게임 폴더 내 `PARAM.SFO`에서 디스크 ID(`ULKS46050`)와 버전(`1.02`)을 추출.
    * 평문 실행 파일(`BOOT.BIN`)의 SHA-1 다이제스트를 계산하여 `variants.json`에 등록.
 2. **`allegrexrecomp` (호스트 도구)**:
-   * `third_party/psprecomp/tools/allegrexrecomp`의 핵심 소스를 psprecomp 런타임 라이브러리 의존성 없이 빌드하여 호스트 실행 파일로 제공.
+   * `third_party/psprecomp/tools/allegrexrecomp`의 핵심 소스에 `patches/psprecomp/` 패치(`0001`~`0003-jalr-fallthrough.patch`)를 적용해 psprecomp 런타임 라이브러리 의존성 없이 호스트 실행 파일로 빌드한다.
    * `info`: ELF/PRX 컨테이너 헤더 및 세그먼트 정보 출력.
    * `funcs`: 제어 흐름 분석, 함수 발견, 임포트 NID 통계 출력.
-   * `emit`: 발견된 9,159개 함수를 144개 C 소스 파일(`dmp1_funcs_*.c`)로 분할 생성.
+   * `emit`: 발견된 함수(8,785개, 내부 진입점 17,215개)를 C 소스 파일(`dmp1_funcs_*.c`)로 분할 생성.
 3. **`regenerate.py`**:
-   * `BOOT.BIN`을 lift 입력으로 자동 선택하여 `allegrexrecomp emit`을 실행하고 `src/game/dmp1/recomp/generated/`에 C 코드를 갱신.
+   * `BOOT.BIN`을 lift 입력으로 자동 선택하여 `allegrexrecomp emit`을 실행하고 `src/game/dmp1/recomp/generated/`(또는 `--outdir` 지정 경로, CMake `-DREDMP1_GENERATED_DIR`)에 C 코드를 갱신.
 
 ---
 
@@ -122,14 +123,14 @@ This document describes reDMP1's layer structure, component dependencies, recomp
 
 * **`app` (`src/app/`, target `redmp1`)**: Application entry point, CLI arguments (`--variants`, `--headless`, `--lift-check`, `--max-vblanks`, `--input-script`, `--save-dir`, `--dialog-answer`), orchestration. When built with generated code (`REDMP1_HAVE_RECOMP=1`), default execution initializes `repsp::platform` (SDL3 audio/display or dummy backends under `--headless`), loads `BOOT.BIN` via `LoadPrx`, mounts `disc0:`/`umd0:` (read-only) and `ms0:` (read-write, mapping `--save-dir` or `GetUserDataDir()/savedata` to `ms0:/PSP/SAVEDATA`) via `repsp::hle::kernel::Register`, registers `repsp::hle::ge`, `repsp::hle::display`, `repsp::hle::ctrl` (keyboard/gamepad, `--input-script`, or neutral input in `--headless`), `repsp::hle::dmac`, `repsp::hle::audio`, `repsp::hle::sascore`, `repsp::hle::atrac`, `repsp::hle::mpeg` (using `repsp::codec` `BlankAvcDecoder`/`SilentDecoder`), and `repsp::hle::utility` (wired to `--dialog-answer`), creates `module_start` (`priority=32`, `stack_size=262144`, `attr=0` per `lift.json`), runs `Scheduler::Run` under `GuardedRun`, classifies stops into `(a)`/`(b)`/`(c)`/`(e)` (including SHA-1 resolved public NID names), and prints Display/Ctrl/GE/Audio/SAS/ATRAC/MPEG/Utility/Dialog statistics and `PrintKernelSummary()`.
 * **`game/dmp1` (`src/game/dmp1/`, target `redmp1_game`)**: Title profile, variant identification, SFO parsing via repsp, SHA-1 validation.
-* **`recomp_abi` (`src/recomp_abi/`, target `redmp1_recomp_abi`)**: Adapter defining psprecomp ABI globals/functions and binding to repsp's recompiled-code contract. repsp does not depend on psprecomp. Note on `dispatch.c`: although the initial design considered a guest-address flat array, the implementation keeps `psprecomp`'s open-addressed hash table for ABI compatibility, memory efficiency, and simpler registration, and will switch to a flat array only if profiling shows dispatch overhead as a bottleneck.
+* **`recomp_abi` (`src/recomp_abi/`, target `redmp1_recomp_abi`)**: Adapter defining psprecomp ABI globals/functions and binding to repsp's recompiled-code contract (`trace.c` optionally enables `REDMP1_TRACE_REFCOUNT=1` when configured with `-DREDMP1_TRACE_GUEST=ON`, default `OFF`). repsp does not depend on psprecomp. Note on `dispatch.c`: although the initial design considered a guest-address flat array, the implementation keeps `psprecomp`'s open-addressed hash table for ABI compatibility, memory efficiency, and simpler registration, and will switch to a flat array only if profiling shows dispatch overhead as a bottleneck.
 * **`repsp` (`third_party/repsp`)**: Shared PSP runtime (GuestMemory, NidRegistry, HLE kernel, platform backends with SDL3).
 
 ## 2. Recompilation Pipeline
 
 1. `register_disc.py`: Reads `PARAM.SFO` and computes `BOOT.BIN` SHA-1 to register the disc into `variants.json`.
-2. `allegrexrecomp`: Host tool built without psprecomp runtime dependencies.
-3. `regenerate.py`: Selects `BOOT.BIN` as plain ELF lift input and invokes `allegrexrecomp emit` into `src/game/dmp1/recomp/generated/`.
+2. `allegrexrecomp`: Host tool built with `patches/psprecomp/` (`0001`..`0003-jalr-fallthrough.patch`) and without psprecomp runtime dependencies.
+3. `regenerate.py`: Selects `BOOT.BIN` as plain ELF lift input and invokes `allegrexrecomp emit` into `src/game/dmp1/recomp/generated/` (or `--outdir`, selectable in CMake via `-DREDMP1_GENERATED_DIR`).
 
 ## 3. Disc Identification Flow
 

@@ -65,6 +65,10 @@ $env:REPSP_HLE_TRACE = "1"
 * `Open Files`: 현재 열려 있는 VFS 파일 목록
 * `User Partition Blocks`: 사용자 메모리 파티션 블록 현황
 
+## 3. 게스트 참조 카운트·단언 진단 (`REDMP1_TRACE_GUEST`)
+
+CMake 구성 시 `-DREDMP1_TRACE_GUEST=ON`을 켜면(`OFF`가 기본값이며 비활성 시 오버헤드 0) `src/recomp_abi/trace.c`의 게스트 진단 훅이 활성화된다. 실행 시 `REDMP1_TRACE_REFCOUNT=1`을 설정하면 `CInstance`/`Holder`/`List` 계열 호출과 게스트 `__assert` 인자(`file`, `line`, `expr`)를 표준 오류로 기록한다.
+
 ---
 
 # Running and HLE Tracing Guide
@@ -108,3 +112,7 @@ Each non-comment (`#`) line has `<vblank> <button tokens...>` (`START`, `SELECT`
 ## 2. Tracing with `REPSP_HLE_TRACE`
 
 Set `REPSP_HLE_TRACE=1` (and optionally `REPSP_HLE_TRACE_LIMIT=<N>`) to log each HLE call with its first four arguments and return value, followed by the kernel call-count, thread, open-file, and user-partition summaries.
+
+## 3. Guest Refcount and Assertion Diagnostics (`REDMP1_TRACE_GUEST`)
+
+Configure CMake with `-DREDMP1_TRACE_GUEST=ON` (default `OFF`, zero runtime cost when disabled) to enable the diagnostic hook in `src/recomp_abi/trace.c`. At runtime, setting `REDMP1_TRACE_REFCOUNT=1` logs `CInstance`/`Holder`/`List` reference-count transitions and guest `__assert(file, line, expr)` failures to `stderr`.
