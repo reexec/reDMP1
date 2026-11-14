@@ -17,6 +17,7 @@
 #include "recomp_abi.h"
 #include <psprecomp/cpu.h>
 #include <psprecomp/dispatch.h>
+#include <repsp/codec/loader.h>
 #include <repsp/hle/atrac.h>
 #include <repsp/hle/audio.h>
 #include <repsp/hle/ctrl.h>
@@ -28,6 +29,7 @@
 #include <repsp/hle/sascore.h>
 #include <repsp/hle/utility.h>
 #include <repsp/platform/guarded_run.h>
+#include <repsp/platform/path.h>
 #include <repsp/platform/input.h>
 #include <repsp/platform/path.h>
 #include <repsp/platform/platform.h>
@@ -62,6 +64,8 @@ void PrintUsage(const char* prog)
               << "  --input-script <path>  Deterministic controller script (<vblank> <button names>)\n"
               << "  --save-dir <path>      Directory for sceUtility savedata slots (default: user data/savedata)\n"
               << "  --dialog-answer <ans>  Auto answer for Yes/No utility dialogs: yes or no (default: yes)\n"
+              << "  --codec-plugin <path>  Path to optional codec plugin shared library\n"
+              << "  --no-codec-plugin      Disable optional codec plugin (use silent/blank)\n"
               << "  --lift-check           Execute recompiled code up to the first firmware call\n"
               << "  --help, -h             Show this help message\n"
               << "  --version, -v          Show version\n";
@@ -356,7 +360,9 @@ int RunBoot(const std::filesystem::path& game_dir,
             uint32_t max_vblanks,
             const std::filesystem::path& input_script_path,
             const std::filesystem::path& save_dir,
-            repsp::hle::utility::DialogAnswer yes_no_answer)
+            repsp::hle::utility::DialogAnswer yes_no_answer,
+            const std::filesystem::path& codec_plugin_path,
+            bool no_codec_plugin)
 {
     std::vector<InputScriptEntry> input_script;
     if (!input_script_path.empty())
@@ -467,6 +473,46 @@ int RunBoot(const std::filesystem::path& game_dir,
     repsp::hle::atrac::Register();
     repsp::hle::mpeg::Register();
 
+    std::unique_ptr<repsp::codec::LoadedCodecPlugin> codec_plugin;
+    if (!no_codec_plugin)
+    {
+        const bool explicit_path = !codec_plugin_path.empty();
+        const std::filesystem::path resolved_path = explicit_path
+            ? codec_plugin_path
+            : (repsp::platform::GetExecutableDirectory() / repsp::codec::DefaultCodecPluginFilename());
+        std::error_code fs_ec;
+        if (explicit_path || std::filesystem::exists(resolved_path, fs_ec))
+        {
+            std::string plugin_err;
+            codec_plugin = repsp::codec::LoadCodecPlugin(resolved_path, &plugin_err);
+            if (codec_plugin != nullptr && codec_plugin->IsLoaded())
+            {
+                std::cout << "[redmp1] Codec plugin loaded: " << codec_plugin->Name()
+                          << " (" << codec_plugin->Description() << ")\n";
+                if (auto* atrac_dec = codec_plugin->GetAtracDecoder())
+                {
+                    repsp::hle::atrac::SetDecoder(atrac_dec);
+                    repsp::hle::mpeg::SetAtracDecoder(atrac_dec);
+                }
+                if (auto* avc_dec = codec_plugin->GetAvcDecoder())
+                {
+                    repsp::hle::mpeg::SetAvcDecoder(avc_dec);
+                }
+            }
+            else
+            {
+                std::cout << "[redmp1] Codec plugin unavailable (" << plugin_err
+                          << "); falling back to silent/blank\n";
+            }
+        }
+        else
+        {
+            std::cout << "[redmp1] Codec plugin not found ("
+                      << repsp::codec::DefaultCodecPluginFilename().string()
+                      << "); using silent/blank fallback\n";
+        }
+    }
+
     repsp::hle::utility::Config utility_cfg;
     utility_cfg.save_root = save_dir.empty()
                                 ? (repsp::platform::GetUserDataDirectory("redmp1") / "savedata")
@@ -557,6 +603,7 @@ int RunBoot(const std::filesystem::path& game_dir,
     repsp::hle::dmac::Shutdown();
     repsp::hle::display::Shutdown();
     repsp::platform::Shutdown();
+    codec_plugin.reset();
 
     int exit_code = 0;
     std::cout << "\n[boot] === BOOT STOP REPORT ===\n";
@@ -681,6 +728,8 @@ int main(int argc, char* argv[])
     std::filesystem::path variants_path;
     std::filesystem::path input_script_path;
     std::filesystem::path save_dir;
+    std::filesystem::path codec_plugin_path;
+    bool no_codec_plugin = false;
     bool dialog_answer_yes = true;
     bool lift_check = false;
     bool headless = false;
@@ -733,6 +782,19 @@ int main(int argc, char* argv[])
                           << " (expected 'yes' or 'no')\n";
                 return 1;
             }
+        }
+        else if (opt == "--codec-plugin")
+        {
+            if (i + 1 >= argc)
+            {
+                std::cerr << "Error: --codec-plugin requires a file path.\n";
+                return 1;
+            }
+            codec_plugin_path = argv[++i];
+        }
+        else if (opt == "--no-codec-plugin")
+        {
+            no_codec_plugin = true;
         }
         else if (opt == "--lift-check")
         {
@@ -801,13 +863,16 @@ int main(int argc, char* argv[])
 #if REDMP1_HAVE_RECOMP
     return RunBoot(game_dir, result, headless, max_vblanks, input_script_path, save_dir,
                    dialog_answer_yes ? repsp::hle::utility::DialogAnswer::kYes
-                                     : repsp::hle::utility::DialogAnswer::kNo);
+                                     : repsp::hle::utility::DialogAnswer::kNo,
+                   codec_plugin_path, no_codec_plugin);
 #else
     (void)headless;
     (void)max_vblanks;
     (void)input_script_path;
     (void)save_dir;
     (void)dialog_answer_yes;
+    (void)codec_plugin_path;
+    (void)no_codec_plugin;
     return 0;
 #endif
 }
