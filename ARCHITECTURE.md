@@ -29,8 +29,9 @@ flowchart TD
 
 1. **`app` (`src/app/`, 타깃 `redmp1`)**:
    * 애플리케이션 진입점(`main.cpp`).
-   * 사용자 명령줄 인자(`--variants`, 게임 디렉터리 경로) 파싱 및 옵션 처리.
+   * 사용자 명령줄 인자(`--variants`, `--lift-check`, 게임 디렉터리 경로) 파싱 및 옵션 처리.
    * `redmp1_game`의 `IdentifyGameDirectory`를 호출하여 게임 디스크 유효성 검사.
+   * 기본 실행(`REDMP1_HAVE_RECOMP=1`) 시 `LoadPrx`, `repsp::hle::kernel::Register(KernelConfig)`(`disc0:`/`umd0:`/`ms0:` 마운트), `Scheduler::CreateThread("module_start")` 및 `GuardedRun` 기반 부팅을 오케스트레이션하고, 정지 분류 `(a)`/`(b)`/`(c)` 및 `PrintKernelSummary()`를 출력한다.
 2. **`game/dmp1` (`src/game/dmp1/`, 타깃 `redmp1_game`)**:
    * DJMAX Portable 타이틀 고유 메타데이터와 프로파일 정의(`include/redmp1/dmp1_profile.h`).
    * `variants.json` 파싱 및 디스크 식별 로직.
@@ -119,7 +120,7 @@ This document describes reDMP1's layer structure, component dependencies, recomp
 
 ## 1. Layers and Dependency Rules
 
-* **`app` (`src/app/`, target `redmp1`)**: Application entry point, CLI arguments, orchestration.
+* **`app` (`src/app/`, target `redmp1`)**: Application entry point, CLI arguments (`--variants`, `--lift-check`), orchestration. When built with generated code (`REDMP1_HAVE_RECOMP=1`), default execution loads `BOOT.BIN` via `LoadPrx`, mounts `disc0:`/`umd0:` (read-only) and `ms0:` (read-write) via `repsp::hle::kernel::Register`, creates `module_start` (`priority=32`, `stack_size=262144`, `attr=0` per `lift.json`), runs `Scheduler::Run` under `GuardedRun`, classifies stops into `(a)`/`(b)`/`(c)`, and prints `PrintKernelSummary()`.
 * **`game/dmp1` (`src/game/dmp1/`, target `redmp1_game`)**: Title profile, variant identification, SFO parsing via repsp, SHA-1 validation.
 * **`recomp_abi` (`src/recomp_abi/`, target `redmp1_recomp_abi`)**: Adapter defining psprecomp ABI globals/functions and binding to repsp's recompiled-code contract. repsp does not depend on psprecomp. Note on `dispatch.c`: although the initial design considered a guest-address flat array, the implementation keeps `psprecomp`'s open-addressed hash table for ABI compatibility, memory efficiency, and simpler registration, and will switch to a flat array only if profiling shows dispatch overhead as a bottleneck.
 * **`repsp` (`third_party/repsp`)**: Shared PSP runtime (GuestMemory, NidRegistry, HLE kernel, platform backends with SDL3).

@@ -11,11 +11,14 @@
 #include "recomp_abi.h"
 #include <psprecomp/cpu.h>
 #include <psprecomp/dispatch.h>
+#include <repsp/hle/kernel.h>
 #include <repsp/platform/guarded_run.h>
+#include <repsp/platform/path.h>
 #include <repsp/recomp/guest_cpu.h>
 #include <repsp/runtime/guest_memory.h>
 #include <repsp/runtime/nid_registry.h>
 #include <repsp/runtime/prx_loader.h>
+#include <repsp/runtime/scheduler.h>
 
 extern "C" void psp_recomp_register(void);
 extern "C" uint64_t psp_dispatch_calls(void);
@@ -198,6 +201,167 @@ int RunLiftCheck(const std::filesystem::path& game_dir, const redmp1::IdentifyRe
 
     return 0;
 }
+
+bool IsKernelLibrary(const std::string& lib)
+{
+    static const char* const kKernelLibs[] = {
+        "SysMemUserForUser",
+        "ThreadManForUser",
+        "IoFileMgrForUser",
+        "ModuleMgrForUser",
+        "LoadExecForUser",
+        "UtilsForUser",
+        "StdioForUser",
+        "Kernel_Library",
+        "scePower",
+        "sceSuspendForUser",
+        "sceUmdUser",
+    };
+    for (const char* k : kKernelLibs)
+    {
+        if (lib == k)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+int RunBoot(const std::filesystem::path& game_dir, const redmp1::IdentifyResult& idResult)
+{
+    uint32_t base = 0x08804000u;
+    std::filesystem::path exe_path = game_dir / "PSP_GAME" / "SYSDIR" / idResult.executable_name;
+    auto exe_bytes = ReadBinaryFile(exe_path);
+    if (exe_bytes.empty())
+    {
+        std::cerr << "[boot] Error: failed to read executable: " << exe_path << "\n";
+        return 1;
+    }
+
+    repsp::runtime::GuestMemory& memory = repsp::runtime::GetGuestMemory();
+    if (!memory.Initialize())
+    {
+        std::cerr << "[boot] Error: failed to initialize guest memory\n";
+        return 1;
+    }
+
+    std::string loadErr;
+    auto loaded = repsp::runtime::LoadPrx(exe_bytes, base, memory, &loadErr);
+    if (!loaded.has_value())
+    {
+        std::cerr << "[boot] Error: LoadPrx failed: " << loadErr << "\n";
+        return 1;
+    }
+
+    recomp_abi_init();
+    psp_recomp_register();
+    if (!repsp_recomp_get_cpu_ops())
+    {
+        std::cerr << "[boot] Error: CPU ops not registered\n";
+        return 1;
+    }
+
+    std::filesystem::path ms0_dir = repsp::platform::GetUserDataDirectory("redmp1") / "ms0";
+    std::error_code ec;
+    std::filesystem::create_directories(ms0_dir, ec);
+
+    repsp::hle::kernel::KernelConfig cfg;
+    cfg.mounts = {
+        {"disc0", game_dir, true},
+        {"umd0", game_dir, true},
+        {"ms0", ms0_dir, false},
+    };
+    cfg.module_image_base = base;
+    cfg.module_image_size = loaded->image_end - base;
+    cfg.module_gp = loaded->gp;
+    cfg.entry_address = loaded->entry;
+    cfg.first_thread_name = "module_start";
+    cfg.first_thread_priority = 32;
+    cfg.first_thread_stack_size = 262144;
+    cfg.first_thread_attr = 0;
+
+    repsp::hle::kernel::Register(cfg);
+
+    repsp::runtime::Scheduler& sched = repsp::runtime::GetScheduler();
+    int32_t entry_tid = sched.CreateThread(
+        cfg.first_thread_name,
+        cfg.entry_address,
+        cfg.first_thread_priority,
+        cfg.first_thread_stack_size,
+        cfg.first_thread_attr,
+        cfg.module_gp);
+    if (entry_tid < 0)
+    {
+        std::cerr << "[boot] Error: CreateThread failed: 0x" << std::hex << entry_tid << std::dec << "\n";
+        return 1;
+    }
+
+    repsp::runtime::GetNidRegistry().SetStopOnUnimplemented(true);
+
+    std::cout << "[boot] Starting guest execution at 0x" << std::hex << loaded->entry
+              << " ($gp=0x" << loaded->gp << ", tid=" << std::dec << entry_tid << ")...\n";
+
+    auto guard_res = repsp::platform::GuardedRun([&]() {
+        sched.Run(entry_tid);
+    });
+
+    repsp::runtime::GetNidRegistry().SetStopOnUnimplemented(false);
+
+    int exit_code = 0;
+    std::cout << "\n[boot] === BOOT STOP REPORT ===\n";
+    if (guard_res.stopped)
+    {
+        uint32_t stop_nid = ParseStoppedNidFromReason(guard_res.stop_reason);
+        if (stop_nid != 0)
+        {
+            std::string lib_name = "(unknown)";
+            for (const auto& imp : loaded->imports)
+            {
+                if (imp.nid == stop_nid)
+                {
+                    lib_name = imp.library;
+                    break;
+                }
+            }
+            const bool is_kernel = IsKernelLibrary(lib_name);
+            std::cout << "  Class:       "
+                      << (is_kernel ? "(b) Unimplemented kernel NID" : "(a) Unimplemented non-kernel NID") << "\n"
+                      << "  Library:     " << lib_name << "\n"
+                      << "  NID:         0x" << std::hex << stop_nid << std::dec << "\n"
+                      << "  Reason:      " << guard_res.stop_reason << "\n";
+            exit_code = is_kernel ? 10 : 0;
+        }
+        else if (guard_res.stop_reason.find("sceKernelExitGame") != std::string::npos)
+        {
+            std::cout << "  Class:       (a) Guest exited via sceKernelExitGame\n"
+                      << "  Reason:      " << guard_res.stop_reason << "\n";
+            exit_code = 0;
+        }
+        else
+        {
+            std::cout << "  Class:       (b) Unexpected runtime/HLE stop\n"
+                      << "  Reason:      " << guard_res.stop_reason << "\n";
+            exit_code = 11;
+        }
+    }
+    else if (!guard_res.succeeded)
+    {
+        std::cout << "  Class:       (c) CPU fault / host exception\n"
+                  << "  Description: " << guard_res.description << "\n";
+        exit_code = 12;
+    }
+    else
+    {
+        std::cout << "  Class:       (a) All guest threads exited normally\n";
+        exit_code = 0;
+    }
+    std::cout << "  Dispatches:  " << psp_dispatch_calls() << "\n"
+              << "  Exit code:   " << exit_code << "\n"
+              << "==============================\n";
+
+    repsp::hle::kernel::PrintKernelSummary();
+    return exit_code;
+}
 #endif
 
 std::filesystem::path FindDefaultVariantsJson(const std::filesystem::path& app_dir, const std::filesystem::path& game_dir)
@@ -301,5 +465,9 @@ int main(int argc, char* argv[])
 #endif
     }
 
+#if REDMP1_HAVE_RECOMP
+    return RunBoot(game_dir, result);
+#else
     return 0;
+#endif
 }

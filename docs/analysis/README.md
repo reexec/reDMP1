@@ -6,6 +6,7 @@
 |---|---|
 | [disc-image.md](disc-image.md) | ULKS-46050 원본 UMD의 신원(redump)과 구성 |
 | [executable.md](executable.md) | 원본 실행 파일(`BOOT.BIN`/`EBOOT.BIN`) 분석, 세그먼트, NID, 함수 커버리지 |
+| [boot.md](boot.md) | 커널·UMD HLE 초기 부팅 흐름, 스레드, 메모리 할당, 첫 비커널 정지 지점 |
 
 ---
 
@@ -17,3 +18,4 @@ Findings from the original disc and executable, by topic, marked **confirmed**, 
 |---|---|
 | [disc-image.md](disc-image.md) | Identity (redump) and layout of the original ULKS-46050 UMD |
 | [executable.md](executable.md) | Analysis of original executables (`BOOT.BIN`/`EBOOT.BIN`), segments, NIDs, function coverage |
+| [boot.md](boot.md) | Initial boot flow under kernel/UMD HLE, threads, memory allocations, first non-kernel stop |

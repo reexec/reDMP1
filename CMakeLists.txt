@@ -141,6 +141,7 @@ else()
 endif()
 target_link_libraries(redmp1 PRIVATE
     redmp1_game
+    repsp::hle_kernel
     repsp::runtime
     repsp::platform
 )
@@ -258,5 +259,13 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/SYSDIR/BOOT.BIN" AND REDMP1
                 "${CMAKE_CURRENT_SOURCE_DIR}/roms"
                 --variants "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/variants.json"
                 --lift-check
+    )
+    add_test(NAME app_boot
+        COMMAND $<TARGET_FILE:redmp1>
+                "${CMAKE_CURRENT_SOURCE_DIR}/roms"
+                --variants "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/variants.json"
+    )
+    set_tests_properties(app_boot PROPERTIES
+        PASS_REGULAR_EXPRESSION "Class:[ \t]*\\(a\\)"
     )
 endif()
