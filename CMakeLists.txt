@@ -141,6 +141,8 @@ else()
 endif()
 target_link_libraries(redmp1 PRIVATE
     redmp1_game
+    repsp::hle_ctrl
+    repsp::hle_dmac
     repsp::hle_display
     repsp::hle_ge
     repsp::hle_kernel
@@ -269,6 +271,6 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/SYSDIR/BOOT.BIN" AND REDMP1
                 --headless
     )
     set_tests_properties(app_boot PROPERTIES
-        PASS_REGULAR_EXPRESSION "Class:[ \t]*\\(a\\).*sceCtrlSetSamplingMode"
+        PASS_REGULAR_EXPRESSION "Class:[ \t]*\\(a\\).*sceAudioChReserve"
     )
 endif()

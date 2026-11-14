@@ -11,7 +11,9 @@
 #include "recomp_abi.h"
 #include <psprecomp/cpu.h>
 #include <psprecomp/dispatch.h>
+#include <repsp/hle/ctrl.h>
 #include <repsp/hle/display.h>
+#include <repsp/hle/dmac.h>
 #include <repsp/hle/ge.h>
 #include <repsp/hle/kernel.h>
 #include <repsp/platform/guarded_run.h>
@@ -289,6 +291,8 @@ int RunBoot(const std::filesystem::path& game_dir, const redmp1::IdentifyResult&
     disp_cfg.scale = 2;
     disp_cfg.window_title = "reDMP1 - DJMAX Portable";
     repsp::hle::display::Register(disp_cfg);
+    repsp::hle::ctrl::Register();
+    repsp::hle::dmac::Register();
 
     repsp::runtime::Scheduler& sched = repsp::runtime::GetScheduler();
     int32_t entry_tid = sched.CreateThread(
@@ -317,6 +321,9 @@ int RunBoot(const std::filesystem::path& game_dir, const redmp1::IdentifyResult&
 
     const std::string ge_stats = repsp::hle::ge::FormatStats();
     const std::string disp_stats = repsp::hle::display::FormatStats();
+    const std::string ctrl_stats = repsp::hle::ctrl::FormatStats();
+    repsp::hle::ctrl::Shutdown();
+    repsp::hle::dmac::Shutdown();
     repsp::hle::display::Shutdown();
 
     int exit_code = 0;
@@ -371,6 +378,7 @@ int RunBoot(const std::filesystem::path& game_dir, const redmp1::IdentifyResult&
     std::cout << "  Dispatches:  " << psp_dispatch_calls() << "\n"
               << "  Exit code:   " << exit_code << "\n"
               << "  " << disp_stats
+              << "  " << ctrl_stats
               << "  " << ge_stats
               << "==============================\n";
 
