@@ -61,9 +61,15 @@ flowchart TD
   * 디코딩 루프(`0x08853D50`)는 링 버퍼 `0x0898F240`으로 `sceAtracDecodeData`를 수행하고 `sceAtracGetStreamDataInfo` + 비동기 읽기(최대 `0x20000`, 128 KiB) + `sceAtracAddStreamData`로 보충하며 `1024` 이상(64의 배수 정렬) 샘플을 채널 `1`에 출력한다. 루프/시크 제어(`0x08854224`, `0x08854370`, `0x08854470`)는 `sceAtracSetLoopNum`과 `sceAtracResetPlayPosition`을 사용한다.
   * `sceMpegInit` 정지 시점까지는 아직 스트림 재생 명령이 투입되지 않아 `sceAtrac3plus` 호출 횟수는 `0`회다.
 
-## 5. 미확정 사항 (**미확정**)
+## 5. 메뉴·플레이 화면 오디오 경로 (**확인됨**)
 
-* 실제 BGM(`AT3`/`AT3+`) 트랙별 루프 구간, 음량 밸런스 및 PMF 동영상(`ch1` `2048`샘플 구간)과 오디오 동기화 동작은 `sceMpeg` HLE 구현 이후 실행에서 확인이 필요하다.
+* 타이틀 → 모드 선택 → 곡 선택 → 플레이 화면(`--max-vblanks 2100`)까지 `Audio: output_calls=3862 frames_written=1695744`, `ch1(1024)=774 calls (905216 frames)`, `ch2(256)=3088 calls (790528 frames)`, `ch0/ch3=0 calls`로 역할이 분리됩니다.
+* **BGM (`sceAtrac3plus` → `ch1`)**: 화면 전환(타이틀 → 곡 선택 → 플레이)마다 이전 스트림을 해제하고 새 스트림을 여는 패턴(`active=1 created=3 released=2`, `frames=664`, `samples=679936`, `streamAdded=229296`)으로 `all2.mp` 내 ATRAC3+ 트랙을 재생합니다.
+* **효과음·키음 (`sceSasCore` → `ch2`)**: 메뉴 이동/결정 및 플레이 중 `__sceSasSetVoice`/`SetPitch`/`SetADSR`/`SetVolume`/`SetKeyOn` `7`회, `SetKeyOff` `48`회가 호출되어 256샘플 단위로 `ch2`에 믹싱됩니다.
+
+## 6. 미확정 사항 (**미확정**)
+
+* 실제 BGM(`AT3`/`AT3+`) 트랙별 루프 구간, 음량 밸런스 및 개별 키음 파형 품질은 실제 ATRAC3plus 디코더 통합 이후 청취 검증이 필요하다.
 
 ---
 
@@ -127,6 +133,12 @@ flowchart TD
   * Opens virtual stream entries from the `.mp` archive table at `0x0896E7A0` (backed by open archives `disc0:/PSP_GAME/USRDIR/all.mp` at offset `172356` and `all2.mp` at offset `66796`), reads the initial `0x10000` (64 KiB) into `0x0896F200`, calls `sceAtracSetDataAndGetID`, `sceAtracGetSoundSample`, and `sceAtracGetRemainFrame` (refill threshold `= remain / 2`), and keeps channel `1` length at `1024`.
   * The decode loop (`0x08853D50`) decodes via `sceAtracDecodeData` into ring buffer `0x0898F240`, refills up to `0x20000` (128 KiB) via `sceAtracGetStreamDataInfo` + async read + `sceAtracAddStreamData`, and outputs `>= 1024` 64-aligned samples to channel `1`. Loop and seek handlers (`0x08854224`, `0x08854370`, `0x08854470`) invoke `sceAtracSetLoopNum` and `sceAtracResetPlayPosition`. No stream commands are queued before `sceMpegInit` (`0` `sceAtrac3plus` calls).
 
-## 5. Unresolved Items (**Unresolved**)
+## 5. Menu and Gameplay Audio Paths (**Confirmed**)
 
-* Per-track `AT3`/`AT3+` loop points, mix balance, and PMF movie (`ch1` `2048`-sample) A/V synchronization remain to be observed once `sceMpeg` HLE is implemented.
+* Running from Title through Mode Select and Song Select into Gameplay (`--max-vblanks 2100`) yields `Audio: output_calls=3862 frames_written=1695744`, `ch1(1024)=774 calls (905216 frames)`, `ch2(256)=3088 calls (790528 frames)`, and `0` calls on `ch0`/`ch3`.
+* **BGM (`sceAtrac3plus` → `ch1`)**: Each scene transition (Title → Song Select → Gameplay) releases the previous stream and opens the next (`active=1 created=3 released=2`, `frames=664`, `samples=679936`, `streamAdded=229296`), streaming ATRAC3+ tracks from `all2.mp`.
+* **SFX and keysounds (`sceSasCore` → `ch2`)**: Menu confirmation and gameplay trigger `7` `SetVoice`/`SetPitch`/`SetADSR`/`SetVolume`/`SetKeyOn` sequences and `48` `SetKeyOff` calls, mixed in 256-sample blocks to `ch2`.
+
+## 6. Unresolved Items (**Unresolved**)
+
+* Per-track `AT3`/`AT3+` loop points, mix balance, and audible keysound playback quality remain to be verified once a real ATRAC3plus decoder is integrated.

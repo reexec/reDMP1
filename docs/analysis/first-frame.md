@@ -366,6 +366,15 @@ flowchart TD
 * **3회 연속 실행 일치**:
   * 동일한 초기 상태(빈 세이브 디렉터리)에서 `--max-vblanks 900` 3회를 실행한 결과 모두 분류 `(e)`(`Exit code: 0`), `Utility` 상태(`savedata_init=2, msgdialog_init=1, written=6284 B`), `Dialog[0]`(`btn=1`), 스레드 4개, 열린 파일 3개, 파티션 7개가 100% 일치했고, 호스트 실측 시간 기반 VBlank/더미 오디오 타이밍 차이로 `presented`(`415`/`413`/`415`), `GE`(`281`/`279`/`281` lists), `Audio`/`SAS`/`ATRAC` 프레임 수만 미세하게 달랐다.
 
+## 8. 곡 선택·플레이 화면 및 Color Test 해소 (`--max-vblanks 2100`, **확인됨**)
+
+* **화면 서술**:
+  * **Song Select**: 좌측 상단 `Rookie Music`, 우측 상단 `1st.STAGE`, 중앙 회전 디스크 아트워크(`DISC 01/10`, `바람에게 부탁해`), 하단 `DIFFICULTY 01 /`·`HIGH.SCORE 0000000`, 우측 `EFFECTOR SELECT`·`GEAR SYSTEM` 미리보기, 하단 `X EXIT / O OK` 안내가 표시된다.
+  * **Gameplay**: 배경 BGA(하늘·구름·캐릭터 애니메이션) 위에 중앙 4버튼 PGP 기어(좌측 피버/게이지, 하단 `0000`/`000000` 카운터, 빨간 판정선)가 놓이고 파란색·흰색 노트가 위에서 아래로 낙하한다.
+* **신규 확인 GE 동작 (Color Test `0x27`/`0xD8`/`0xD9`/`0xDA`)**:
+  * 플레이 화면의 기어 외곽과 하단 점수 카운터 배경에서 `#FF00FF` 마젠타 컬러키가 투명으로 빠져야 하는 부분에 GE 명령 `0x27` (`CTE=1`), `0xD8` (`CTEST=3` `NOTEQUAL`), `0xD9` (`CREF=0xC000C0`), `0xDA` (`CMSK=0xC0C0C0`)가 `8,805`회 사용됨을 확인했다. `repsp`에 Color Test를 구현한 뒤 마젠타 컬러키 잔여가 사라졌다.
+  * `--max-vblanks 2100` 기준 `GE: 849 lists, 774,726 commands, 0 signals, 849 finishes`, `pixels written: 323,309,554`.
+
 ---
 
 # GE Initialization and Pre-First-Frame Stop Analysis (`ULKS-46050`, `BOOT.BIN`)
@@ -469,3 +478,11 @@ flowchart TD
 * **Graphics stats and visual description**: Under empty save dir + `--dialog-answer yes` + `--max-vblanks 900`, `Display: mode=0 480x272 fb=0x04000000 stride=512 fmt=1 (ABGR1555) vblanks=900 presented=406`, `GE: 272 lists, 87,451 commands, 0 signals, 272 finishes`, `framebuffer 0x00044000 stride 512 psm 1, vertex type 0x00019F`, `vertices submitted: 17,134`, `triangle-strip: 4,150`, `sprites: 267`, **`pixels written: 136,925,016`**.
   * Dumped frames show: `frame_0000..0139` black (`opening.pmf`), `frame_0140..0164` `"NOW LOADING"` (`1,951` nonzero pixels), `frame_0165` black transition, `frame_0166..0174` fade-in, and `frame_0175..0405` the full title screen (`129,909` nonzero pixels): blue speaker-stack background, central silver `"DJMAX EMOTIONAL SENSE P"` emblem, chrome `"PORTABLE"` wordmark with left/right arrows, `"PRESS START BUTTON"`, and bottom blue footer `"© 2004, 2006 PENTAVISION. ALL RIGHTS RESERVED."` (the 169 pixels of 1px `#FF00FF` magenta border present in i015 are reduced to `0` pixels after the `repsp` `SwTri` pixel-center + top-left fill rule fix in issues #17/#18).
 * **3-run determinism**: Across 3 identical runs from an empty save dir (`--max-vblanks 900`), all 3 reached `Class (e)` (`Exit code: 0`) with identical `Utility` (`savedata_init=2, msgdialog_init=1, written=6284 B`), `Dialog[0]` (`btn=1`), 4 threads, 3 open files, and 7 user partition blocks; only host wall-clock-coupled `presented` (`415`/`413`/`415`), `GE` (`281`/`279`/`281` lists), and `Audio`/`SAS`/`ATRAC` frame counts differed slightly.
+
+## 8. Song Select, Gameplay Screen, and Color Test Resolution (`--max-vblanks 2100`, **Confirmed**)
+
+* **Screen descriptions**:
+  * **Song Select**: `Rookie Music` header, `1st.STAGE`, central rotating disc artwork (`DISC 01/10`), `DIFFICULTY 01 /` and `HIGH.SCORE 0000000`, right-hand `EFFECTOR SELECT` and `GEAR SYSTEM` preview, and `X EXIT / O OK` footer.
+  * **Gameplay**: Full-screen BGA animation behind the centered 4-button PGP gear (left gauge, `0000`/`000000` counters, red judgement line) with blue and white/red notes scrolling down.
+* **Newly observed GE Color Test (`0x27`/`0xD8`/`0xD9`/`0xDA`)**:
+  * The gameplay gear border and digit counter backgrounds rely on GE Color Test (`0x27` `CTE=1`, `0xD8` `CTEST=3` `NOTEQUAL`, `0xD9` `CREF=0xC000C0`, `0xDA` `CMSK=0xC0C0C0`, issued `8,805` times) to key out `#FF00FF` magenta; implementing Color Test in `repsp` resolved the magenta boxes cleanly (`GE: 849 lists, 774,726 commands, 0 signals, 849 finishes`, `pixels written: 323,309,554` at `--max-vblanks 2100`).
