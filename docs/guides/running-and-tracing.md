@@ -71,6 +71,12 @@ $env:REPSP_HLE_TRACE = "1"
 
 CMake 구성 시 `-DREDMP1_TRACE_GUEST=ON`을 켜면(`OFF`가 기본값이며 비활성 시 오버헤드 0) `src/recomp_abi/trace.c`의 게스트 진단 훅이 활성화된다. 실행 시 `REDMP1_TRACE_REFCOUNT=1`을 설정하면 `CInstance`/`Holder`/`List` 계열 호출과 게스트 `__assert` 인자(`file`, `line`, `expr`)를 표준 오류로 기록한다.
 
+## 4. 오디오·SAS·ATRAC 진단
+
+* **`REPSP_AUDIO_DUMP=<path.wav>`**: 최종 믹서 출력 WAV(`<path.wav>`)와 함께, 실제 출력이 발생한 `sceAudio` 채널별 믹서 입력 WAV(`<stem>.ch<N>.wav`) 및 `__sceSasCore` 믹서 출력 WAV(`<stem>.sas.wav`)를 함께 기록한다.
+* **`REPSP_SAS_TRACE=1`**: `Init`, `SetVoice`(주소, 크기, `startOff`, `loop`, VAG 블록 `flags` 분포), `KeyOn`, `KeyOff`, `SetPitch`, 첫/특수 블록, 보이스 종료 사유, `GetEndFlag` 변화를 `[SAS_TRACE]`로 출력한다.
+* **`REPSP_ATRAC_TRACE=1`**: `Open`(모드, 코덱 태그, 채널, 표본화 주파수, `block_align`, `spf`, `end_sample`, `delay`, 루프 지점), `SetLoopNum`, `ResetPlayPosition`, 디코딩 호출별 상태, `Release`를 `[ATRAC_TRACE]`로 출력한다.
+
 ---
 
 # Running and HLE Tracing Guide
@@ -118,3 +124,9 @@ Set `REPSP_HLE_TRACE=1` (and optionally `REPSP_HLE_TRACE_LIMIT=<N>`) to log each
 ## 3. Guest Refcount and Assertion Diagnostics (`REDMP1_TRACE_GUEST`)
 
 Configure CMake with `-DREDMP1_TRACE_GUEST=ON` (default `OFF`, zero runtime cost when disabled) to enable the diagnostic hook in `src/recomp_abi/trace.c`. At runtime, setting `REDMP1_TRACE_REFCOUNT=1` logs `CInstance`/`Holder`/`List` reference-count transitions and guest `__assert(file, line, expr)` failures to `stderr`.
+
+## 4. Audio, SAS, and ATRAC Diagnostics
+
+* **`REPSP_AUDIO_DUMP=<path.wav>`**: In addition to the final mixed WAV (`<path.wav>`), writes per-channel `sceAudio` mixer input WAVs (`<stem>.ch<N>.wav`) for active channels and the `__sceSasCore` mixer output WAV (`<stem>.sas.wav`).
+* **`REPSP_SAS_TRACE=1`**: Logs `[SAS_TRACE]` lines for `Init`, `SetVoice` (address, size, `startOff`, `loop`, VAG block `flags` histogram), `KeyOn`, `KeyOff`, `SetPitch`, first/non-zero blocks, voice end reasons, and `GetEndFlag` changes.
+* **`REPSP_ATRAC_TRACE=1`**: Logs `[ATRAC_TRACE]` lines for `Open` (mode, codec tag, channels, sample rate, `block_align`, `spf`, `end_sample`, `delay`, loop points), `SetLoopNum`, `ResetPlayPosition`, per-call `Decode`, and `Release`.
