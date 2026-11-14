@@ -9,6 +9,7 @@
 | [boot.md](boot.md) | 커널·UMD HLE 초기 부팅 흐름, 스레드, 메모리 할당, 첫 비커널 정지 지점 |
 | [first-frame.md](first-frame.md) | GE·디스플레이 초기화 흐름, GE 통계, `sceCtrlSetSamplingMode`~`sceMpegInit` 진행 경과 |
 | [audio.md](audio.md) | `sceAudio`·`sceSasCore`·`sceAtrac3plus` 초기화, 오디오 스레드 구조 및 스트리밍 경로 |
+| [video.md](video.md) | `sceMpeg` 초기화, `opening.pmf` PSMF/PES/AU 구성, 스킵 후 `"NOW LOADING"` 전환 |
 
 ---
 
@@ -23,3 +24,4 @@ Findings from the original disc and executable, by topic, marked **confirmed**, 
 | [boot.md](boot.md) | Initial boot flow under kernel/UMD HLE, threads, memory allocations, first non-kernel stop |
 | [first-frame.md](first-frame.md) | GE/display initialization flow, GE stats, `sceCtrlSetSamplingMode` to `sceMpegInit` progression |
 | [audio.md](audio.md) | `sceAudio`, `sceSasCore`, and `sceAtrac3plus` initialization, audio threads, and streaming paths |
+| [video.md](video.md) | `sceMpeg` initialization, `opening.pmf` PSMF/PES/AU layout, skip transition to `"NOW LOADING"` |

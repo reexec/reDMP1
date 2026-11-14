@@ -141,6 +141,7 @@ else()
 endif()
 target_link_libraries(redmp1 PRIVATE
     redmp1_game
+    repsp::codec
     repsp::hle_atrac
     repsp::hle_audio
     repsp::hle_ctrl
@@ -148,11 +149,17 @@ target_link_libraries(redmp1 PRIVATE
     repsp::hle_display
     repsp::hle_ge
     repsp::hle_kernel
+    repsp::hle_mpeg
     repsp::hle_sascore
     repsp::runtime
     repsp::platform
 )
 repsp_apply_host_flags(redmp1)
+if(MSVC)
+    # Lifted tail-recursive loops in redmp1_recomp are not tail-call optimized under /Od,
+    # so reserve 64 MB of host stack for Debug movie playback loops.
+    target_link_options(redmp1 PRIVATE /STACK:67108864)
+endif()
 
 # Relocation verification tool (cross-check repsp vs allegrexrecomp)
 add_executable(reloc_check
@@ -230,7 +237,7 @@ add_test(NAME app_smoke_unregistered
 
 # Smoke 6: Registered roms (if present in local tree)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/PARAM.SFO")
-    add_test(NAME app_smoke_registered_roms COMMAND $<TARGET_FILE:redmp1> "${CMAKE_CURRENT_SOURCE_DIR}/roms" --variants "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/variants.json")
+    add_test(NAME app_smoke_registered_roms COMMAND $<TARGET_FILE:redmp1> "${CMAKE_CURRENT_SOURCE_DIR}/roms" --variants "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/variants.json" --headless --max-vblanks 10)
 endif()
 
 # Relocation cross-check (runs only when roms exist)
@@ -272,8 +279,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/SYSDIR/BOOT.BIN" AND REDMP1
                 "${CMAKE_CURRENT_SOURCE_DIR}/roms"
                 --variants "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/variants.json"
                 --headless
+                --max-vblanks 120
     )
     set_tests_properties(app_boot PROPERTIES
-        PASS_REGULAR_EXPRESSION "Class:[ \t]*\\(a\\).*sceMpegInit"
+        PASS_REGULAR_EXPRESSION "Class:[ \t]*\\(e\\) VBlank limit reached.*AVC decode: blank"
     )
 endif()

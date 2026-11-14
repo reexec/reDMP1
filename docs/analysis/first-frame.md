@@ -326,6 +326,26 @@ flowchart TD
   * `Ctrl: cycle=0 mode=1 produced=2 read=0`, `Audio: reserved=4 output_calls=1 frames_written=256 frames_pulled=2048 underruns=0` (`ch2 calls=1 frames=256 rest=0`), `SAS: instances=1 calls=1 frames=256 keyOn=0 keyOff=0 activeVoices=0 revType=-1 reverb=dry only (not mixed)`, `ATRAC decode: silent | active=0 created=0 released=0 frames=0 samples=0 streamAdded=0 resets=0`.
   * **3회 연속 실행 일치**: 3회 모두 정지 지점(`sceMpegInit`), GE/Display/Ctrl/Audio/SAS/ATRAC 통계, HLE 호출 횟수 표(`115`항목, `CpuSuspendIntr`/`CpuResumeIntr` 각 `1831`회), 4개 게스트 스레드, 열린 파일 2개(`all.mp`, `all2.mp`), 7개 사용자 파티션 블록이 100% 일치했고, `120`건의 비 `CpuSuspendIntr`/`CpuResumeIntr` 추적 중 실시간 경과를 반영한 `sceKernelGetSystemTimeWide` 반환값(`0x00000DA8`/`0x00000CFA`/`0x00000D47`) 1건만 달랐다.
 
+## 6. 동영상 재생·스킵 이후 화면과 다음 정지 지점 (**확인됨**)
+
+```mermaid
+flowchart TD
+    M["sceMpegInit..Create + soundThread(0x1A)<br/>opening.pmf (RGBA8888 0x04088000 / 0x04110000)"] --> SK["START 입력 스킵 -> sceMpegAvcDecodeFlush..Finish"]
+    SK --> G0["sceGeSetCallback(0x09FBF950) + 리스트 0x088FAD74 / 0x48C3CE70"]
+    G0 --> D1["sceDisplaySetFrameBuf(0x04044000 / 0x04000000, stride=512, fmt=1 [ABGR1555])"]
+    D1 --> G1["GE 4개 그리기 리스트 (triangle-strip 3, sprites 3, 411,657 px): NOW LOADING"]
+    G1 --> IO3["all.mp 비동기 추가 읽기 (0x00045660..0x00049440)"]
+    IO3 --> UTIL["정지: sceUtility:sceUtilitySavedataInitStart (0x50C4CD57)"]
+```
+
+* **동영상 재생 구간(세부 분석: [video.md](video.md))**:
+  * `sceMpeg` 24개 NID를 통해 `disc0:/PSP_GAME/USRDIR/movie/opening.pmf`(`PSMF0014`, `480x272`)를 `RGBA8888`(`fmt=3`) 더블 버퍼 `0x04088000`/`0x04110000`에 디코딩한다. 무입력 300 VBlank 실행 시 `BlankAvcDecoder`/`SilentDecoder` 기준 `avcAu=153/153`, `atracAu=118/118`, `presented=147`(약 29.97 fps), 출력 화면은 모두 불투명 검은 프레임(`0xFF000000`)이다.
+* **스킵 이후 첫 비검정 그래픽 화면**:
+  * 스크립트 `START` 입력으로 오프닝을 건너뛰면(`sceMpegFinish` 완료) GE 콜백과 `ABGR1555`(`fmt=1`, `0x04000000` ↔ `0x04044000`)를 재설정하고 `8`개 GE 리스트(`749` 명령, `vertices=18`, `triangle-strip=3`, `sprites=3`, **`pixels written=411,657`**)를 실행해 검은 배경 오른쪽에 흰 테두리와 음파 아이콘이 들어간 **`"NOW LOADING"`** 배너 화면을 그린다.
+* **다음 정지 지점과 3회 실행 일치**:
+  * `all.mp` 추가 비동기 읽기 후 **`sceUtility:sceUtilitySavedataInitStart (0x50C4CD57)`** 에서 분류 `(a)` (`Exit code: 0`)로 정지한다.
+  * 무입력 `--max-vblanks 300` 3회는 출력 전체가 바이트 단위 100% 일치했고, `--input-script` 3회는 정지 NID·GE `411,657` 화소·AVC `143`/ATRAC `111` AU·스레드(4개)·열린 파일(2개)이 모두 일치했으며 호스트 오디오 스레드 타이밍에 따른 `frames_pulled`/`sceAudioGetChannelRestLength`(`±4`회)·`vblanks`(`313`/`314`)만 미세하게 달랐다.
+
 ---
 
 # GE Initialization and Pre-First-Frame Stop Analysis (`ULKS-46050`, `BOOT.BIN`)
@@ -416,3 +436,9 @@ flowchart TD
   * Display/GE stats are `mode=0 480x272 fb=0x04044000 stride=512 fmt=1 vblanks=2 presented=1 dumped=1`, `2 lists, 282 commands, 0 signals, 2 finishes`, `vertices submitted: 0`, `pixels written: 0`; the dumped frame (`480x272`, 32bpp) is solid black (`0` non-zero RGB pixels) as no drawing primitives are emitted yet.
   * `Ctrl: cycle=0 mode=1 produced=2 read=0`, `Audio: reserved=4 output_calls=1 frames_written=256 frames_pulled=2048 underruns=0` (`ch2 calls=1 frames=256 rest=0`), `SAS: instances=1 calls=1 frames=256 keyOn=0 keyOff=0 activeVoices=0 revType=-1 reverb=dry only (not mixed)`, `ATRAC decode: silent | active=0 created=0 released=0 frames=0 samples=0 streamAdded=0 resets=0`.
   * **3-run determinism**: Across all 3 runs, the stop NID (`sceMpegInit`), Display/Ctrl/GE/Audio/SAS/ATRAC stats, the `115`-entry HLE call-count table (`1831` `CpuSuspendIntr`/`CpuResumeIntr`), all 4 guest threads, both open files (`all.mp`, `all2.mp`), and all 7 user partition blocks matched 100%; out of `120` non-`CpuSuspendIntr`/`CpuResumeIntr` traces, only the wall-clock `sceKernelGetSystemTimeWide` return value (`0x00000DA8`/`0x00000CFA`/`0x00000D47`) varied.
+
+## 6. Post-Movie Screen and Next Stop Point (**Confirmed**)
+
+* **Movie segment (details in [video.md](video.md))**: `BOOT.BIN` opens `disc0:/PSP_GAME/USRDIR/movie/opening.pmf` (`PSMF0014`, `480x272`) and alternates `RGBA8888` (`fmt=3`) framebuffers `0x04088000` ↔ `0x04110000`. At `--max-vblanks 300`, HLE yields `avcAu=153/153`, `atracAu=118/118`, and `presented=147` (~29.97 fps, opaque black `0xFF000000` frames).
+* **Post-skip rendered screen**: Pressing `START` tears down `sceMpeg`, re-initializes GE and `ABGR1555` double buffers (`0x04000000` ↔ `0x04044000`), executes `8` GE lists (`749` commands, `18` vertices, `3` triangle-strips, `3` sprites, **`411,657` pixels written**), and displays a black screen with a right-aligned white-outlined sound-wave **`"NOW LOADING"`** banner.
+* **Next stop point and 3-run determinism**: After additional `all.mp` async reads, execution stops at **`sceUtility:sceUtilitySavedataInitStart (0x50C4CD57)`** (`Class (a)`, `Exit code: 0`). Three consecutive `--max-vblanks 300` runs were 100% byte-identical; three consecutive `--input-script` runs matched identically on stop NID, GE `411,657` px, `143` AVC / `111` ATRAC AUs, 4 threads, and 2 open files, differing only in host-timed `frames_pulled`, `sceAudioGetChannelRestLength` (`±4`), and `vblanks` (`313`/`314`).
