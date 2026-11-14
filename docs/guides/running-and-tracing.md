@@ -9,14 +9,15 @@
 
 ## 1. 기본 부팅 실행
 
-1. Win64 Release 빌드 후 게임 디렉터리(`roms/`)를 인자로 전달해 실행한다.
+1. Win64 Release 빌드 후 게임 디렉터리(`roms/`)를 인자로 전달해 실행한다. 창 없이 실행하려면 `--headless`를 붙인다.
    ```powershell
-   .\build\win64-release\Release\redmp1.exe roms --variants src\game\dmp1\recomp\variants.json
+   .\build\win64-release\Release\redmp1.exe roms --variants src\game\dmp1\recomp\variants.json --headless
    ```
 2. 종료 후 출력되는 `[boot] === BOOT STOP REPORT ===`와 종료 코드를 확인한다.
-   * **분류 (a) (종료 코드 `0`)**: 비커널 NID 미구현 지점 도달 또는 정상 종료(`sceKernelExitGame` 포함). 현재 기준은 `sceGe_user:0xA4FC06A4` 정지다.
+   * **분류 (a) (종료 코드 `0`)**: 비커널 NID 미구현 지점 도달 또는 정상 종료(`sceKernelExitGame` 포함). 현재 기준은 `sceCtrl:sceCtrlSetSamplingMode (0x1F4011E6)` 정지다.
    * **분류 (b) (종료 코드 `10` 또는 `11`)**: 커널 NID 미구현 또는 예기치 않은 런타임/HLE 정지.
    * **분류 (c) (종료 코드 `12`)**: CPU 폴트 또는 호스트 예외.
+3. 프레임버퍼가 latch된 프레임을 BMP로 저장하려면 `REPSP_FRAME_DUMP=<디렉터리>`와 `REPSP_FRAME_DUMP_LIMIT=<N>`을 설정한다.
 
 ---
 
@@ -48,13 +49,15 @@ This guide describes how to run `redmp1` to inspect kernel/UMD HLE boot behavior
 ## 1. Default Boot Execution
 
 ```powershell
-.\build\win64-release\Release\redmp1.exe roms --variants src\game\dmp1\recomp\variants.json
+.\build\win64-release\Release\redmp1.exe roms --variants src\game\dmp1\recomp\variants.json --headless
 ```
 
 Check `[boot] === BOOT STOP REPORT ===` and the exit code:
-* **Class (a) (`0`)**: Stopped at an unimplemented non-kernel NID (currently `sceGe_user:0xA4FC06A4`) or exited cleanly (`sceKernelExitGame`).
+* **Class (a) (`0`)**: Stopped at an unimplemented non-kernel NID (currently `sceCtrl:sceCtrlSetSamplingMode (0x1F4011E6)`) or exited cleanly (`sceKernelExitGame`).
 * **Class (b) (`10` or `11`)**: Unimplemented kernel NID or unexpected runtime/HLE stop.
 * **Class (c) (`12`)**: CPU fault or host exception.
+
+Set `REPSP_FRAME_DUMP=<dir>` and `REPSP_FRAME_DUMP_LIMIT=<N>` to dump latched frames as BMP files.
 
 ## 2. Tracing with `REPSP_HLE_TRACE`
 
