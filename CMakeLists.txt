@@ -16,8 +16,14 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # 1. repsp integration (shared runtime)
+option(REDMP1_CODEC_FFMPEG "Build and stage optional FFmpeg codec plugin" OFF)
 set(REDMP1_REPSP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/repsp" CACHE PATH "Path to repsp directory")
 set(REPSP_BUILD_PROBES ON CACHE BOOL "Build repsp verification probes")
+if(REDMP1_CODEC_FFMPEG)
+    set(REPSP_CODEC_FFMPEG ON CACHE BOOL "Build optional dynamically loaded FFmpeg codec plugin" FORCE)
+else()
+    set(REPSP_CODEC_FFMPEG OFF CACHE BOOL "Build optional dynamically loaded FFmpeg codec plugin" FORCE)
+endif()
 
 add_subdirectory("${REDMP1_REPSP_DIR}" repsp)
 
@@ -165,6 +171,21 @@ target_link_libraries(redmp1 PRIVATE
     repsp::platform
 )
 repsp_apply_host_flags(redmp1)
+if(REDMP1_CODEC_FFMPEG)
+    add_dependencies(redmp1 repsp_codec_ffmpeg)
+    add_custom_command(TARGET redmp1 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:repsp_codec_ffmpeg>"
+            "$<TARGET_FILE_DIR:redmp1>"
+    )
+    foreach(_ff_lib IN LISTS REPSP_FFMPEG_SHARED_LIBS)
+        add_custom_command(TARGET redmp1 POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${_ff_lib}"
+                "$<TARGET_FILE_DIR:redmp1>"
+        )
+    endforeach()
+endif()
 if(MSVC)
     # Lifted tail-recursive loops in redmp1_recomp are not tail-call optimized under /Od,
     # so reserve 64 MB of host stack for Debug movie playback loops.
@@ -295,6 +316,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/SYSDIR/BOOT.BIN" AND REDMP1
                 "${CMAKE_CURRENT_SOURCE_DIR}/roms"
                 --variants "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/variants.json"
                 --headless
+                --no-codec-plugin
                 --save-dir "${CMAKE_CURRENT_BINARY_DIR}/test_savedata"
                 --max-vblanks 120
     )

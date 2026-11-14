@@ -67,6 +67,7 @@ sequenceDiagram
 ## 4. 스킵 입력과 `sceUtilitySavedataInitStart` 전환 (**확인됨 / 미확정**)
 
 * **START 입력 스킵 (확인됨)**: `BlankAvcDecoder`/`SilentDecoder` 상태에서 무입력으로는 300 VBlank 동안 `avcAu=153/153`, `atracAu=118/118`, `presented=147`(약 29.97 fps)으로 계속 재생된다. VBlank `280`에서 `START` 입력이 들어가면 루프를 탈출해 `sceMpegAvcDecodeFlush` → `sceMpegFreeAvcEsBuf` → `sceMpegUnRegistStream`×2 → `sceMpegDelete` → `sceMpegRingbufferDestruct` → `sceMpegFinish` 순으로 자원을 해제하고 `fd=5`(`opening.pmf`)를 닫는다.
+* **FFmpeg 코덱 플러그인 디코딩 검증 (확인됨)**: `REDMP1_CODEC_FFMPEG=ON` 무입력 450 VBlank 실행에서 `avcDec=227/227`, `atracDec=171/171` 프레임 디코딩을 확인했고, `REPSP_FRAME_DUMP` 60프레임 중 38프레임이 비흑색(고유 해시 26개)으로 정상 변화하며 `RGBA8888` 채널 범위·R/B 순서가 정상임을 확인했다.
 * **후속 화면 및 정지 지점 (확인됨)**: 종료 직후 GE 콜백(`0x09FBF950`)과 `ABGR1555`(`fmt=1`, `0x04000000`/`0x04044000`) 디스플레이를 다시 설정하고, 오른쪽 `"NOW LOADING"` 배너를 포함한 4개 리스트(`411,657`화소)를 그린 뒤 `all.mp` 비동기 읽기를 거쳐 `sceUtility:sceUtilitySavedataInitStart (0x50C4CD57)`(호출처 후보 `0x0882E874`/`0x0882EA08`/`0x0882F76C`)에서 분류 `(a)`로 정지한다.
 * **미확정**: `opening.pmf`를 스킵하지 않고 127.63초(약 7,658 VBlank) 끝까지 완주했을 때도 동일한 `"NOW LOADING"` → `sceUtilitySavedataInitStart` 경로로 들어가는지는 아직 측정하지 않았다.
 
