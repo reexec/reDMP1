@@ -10,11 +10,17 @@
 flowchart TD
     TITLE["타이틀 화면 루프 (TitleScene)<br/>frame_0175..: PRESS START BUTTON"] -->|START 입력| CLEAN["TitleScene::Cleanup (0x0880AE40)"]
     CLEAN -->|객체 해제 루프| REL["List::Release (0x088485E8)<br/>CInstance 참조 카운트 감소"]
-    REL --> NEXT["Mode Select / Main Menu 진입<br/>ROOKIE DJING / EASY MODE / 4Buttons<br/>X EXIT / O OK (frame_0399)"]
+    REL --> NEXT["Mode Select / Main Menu 진입<br/>ROOKIE DJING / EASY MODE / 4Buttons<br/>X EXIT / O OK"]
+    NEXT -->|CIRCLE 입력 (vblank 850)| SONG["Song Select (Rookie Music / 1st.STAGE)<br/>DISC 01/10 바람에게 부탁해<br/>X EXIT / O OK (frame_0563)"]
+    SONG -->|CIRCLE 입력 (vblank 1350)| PLAY["Gameplay (4-Button PGP + BGA)<br/>ScorePlayerThread (prio=34) 기동<br/>노트 낙하 루프 (frame_0982)"]
 ```
 
 * `--input-script`로 오프닝(`280 START`)과 타이틀(`400 START`)을 통과하면 `TitleScene::Cleanup`(`0x0880AE40`)이 리소스를 해제한 뒤 메인 메뉴(Mode Select: `ROOKIE DJING / EASY MODE / 4Buttons`, `X EXIT / O OK`) 화면으로 전환됩니다.
 * `--max-vblanks 900` 실행에서 분류 `(e) VBlank limit reached` (`Exit code: 0`)로 종료되며, `Display: mode=0 480x272 fb=0x04000000 stride=512 fmt=1 vblanks=900 presented=400 dumped=400`, `GE: 266 lists, 82050 commands, 0 signals, 266 finishes`를 기록했습니다.
+* **곡 선택 및 플레이 진입 (`--max-vblanks 2100`, 확인됨)**:
+  * Mode Select에서 `CIRCLE`(`850 CIRCLE`)을 입력하면 Song Select(`Rookie Music`, `1st.STAGE`, `DISC 01/10 바람에게 부탁해`, `EFFECTOR SELECT`, `GEAR SYSTEM`, `X EXIT / O OK`) 화면으로 진입합니다.
+  * Song Select에서 `CIRCLE`(`1350 CIRCLE`)을 입력하면 곡 데이터와 BGA 리소스(`all.mp` `fd=3`, `all2.mp` `fd=8` 추가 열기)를 로드하고 게스트 스레드 `ScorePlayerThread`(`uid=0x1D`, `prio=34`, `stack=0x8000`, 진입점 `0x0886141C`)를 생성·기동한 뒤 플레이 화면(배경 BGA 재생, 중앙 4버튼 PGP 기어, 노트 낙하 루프)으로 진입합니다.
+  * `--max-vblanks 2100` 실행에서 분류 `(e)` (`Exit code: 0`), `Display: mode=0 480x272 fb=0x04044000 stride=512 fmt=1 vblanks=2100 presented=983 dumped=983`, `GE: 849 lists, 774726 commands, 0 signals, 849 finishes`로 종료되었습니다.
 
 ---
 
@@ -39,6 +45,9 @@ flowchart TD
 
 * Passing the opening (`280 START`) and title (`400 START`) prompts via `--input-script` runs `TitleScene::Cleanup` (`0x0880AE40`) and transitions cleanly into the Main Menu / Mode Select screen (`ROOKIE DJING / EASY MODE / 4Buttons`, `X EXIT / O OK`), verified visually in `frame_0399.png`.
 * Running to `--max-vblanks 900` finishes cleanly with Class `(e) VBlank limit reached` (`Exit code: 0`), `Display: mode=0 480x272 fb=0x04000000 stride=512 fmt=1 vblanks=900 presented=400 dumped=400`, and `GE: 266 lists, 82050 commands, 0 signals, 266 finishes`.
+* **Song Select and Gameplay Entry (`--max-vblanks 2100`, Confirmed)**:
+  * Pressing `CIRCLE` (`850 CIRCLE`) on Mode Select enters Song Select (`Rookie Music`, `1st.STAGE`, `DISC 01/10`, `EFFECTOR SELECT`, `GEAR SYSTEM`, `X EXIT / O OK`).
+  * Pressing `CIRCLE` (`1350 CIRCLE`) on Song Select loads chart/BGA assets (`all.mp` `fd=3`, `all2.mp` `fd=8`), spawns `ScorePlayerThread` (`uid=0x1D`, `prio=34`, `stack=0x8000`, entry `0x0886141C`), and enters the 4-button PGP gameplay screen with scrolling notes over the BGA, ending cleanly at `--max-vblanks 2100` (`Exit code: 0`, `Display: mode=0 480x272 fb=0x04044000 stride=512 fmt=1 vblanks=2100 presented=983 dumped=983`, `GE: 849 lists, 774726 commands, 0 signals, 849 finishes`).
 
 ## 2. Root Cause of `Instance.cpp:37` (`assertion "m_referenceCount" failed`) (**Confirmed**)
 
