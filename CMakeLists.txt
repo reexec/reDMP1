@@ -151,6 +151,7 @@ target_link_libraries(redmp1 PRIVATE
     repsp::hle_kernel
     repsp::hle_mpeg
     repsp::hle_sascore
+    repsp::hle_utility
     repsp::runtime
     repsp::platform
 )
@@ -237,7 +238,7 @@ add_test(NAME app_smoke_unregistered
 
 # Smoke 6: Registered roms (if present in local tree)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/PARAM.SFO")
-    add_test(NAME app_smoke_registered_roms COMMAND $<TARGET_FILE:redmp1> "${CMAKE_CURRENT_SOURCE_DIR}/roms" --variants "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/variants.json" --headless --max-vblanks 10)
+    add_test(NAME app_smoke_registered_roms COMMAND $<TARGET_FILE:redmp1> "${CMAKE_CURRENT_SOURCE_DIR}/roms" --variants "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/variants.json" --headless --save-dir "${CMAKE_CURRENT_BINARY_DIR}/test_savedata_smoke" --max-vblanks 10)
 endif()
 
 # Relocation cross-check (runs only when roms exist)
@@ -274,14 +275,22 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/roms/PSP_GAME/SYSDIR/BOOT.BIN" AND REDMP1
                 --variants "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/variants.json"
                 --lift-check
     )
+    add_test(NAME app_boot_clean_savedata
+        COMMAND "${CMAKE_COMMAND}" -E rm -rf "${CMAKE_CURRENT_BINARY_DIR}/test_savedata"
+    )
+    set_tests_properties(app_boot_clean_savedata PROPERTIES
+        FIXTURES_SETUP savedata_clean
+    )
     add_test(NAME app_boot
         COMMAND $<TARGET_FILE:redmp1>
                 "${CMAKE_CURRENT_SOURCE_DIR}/roms"
                 --variants "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/variants.json"
                 --headless
+                --save-dir "${CMAKE_CURRENT_BINARY_DIR}/test_savedata"
                 --max-vblanks 120
     )
     set_tests_properties(app_boot PROPERTIES
-        PASS_REGULAR_EXPRESSION "Class:[ \t]*\\(e\\) VBlank limit reached.*AVC decode: blank"
+        FIXTURES_REQUIRED savedata_clean
+        PASS_REGULAR_EXPRESSION "Class:[ \t]*\\(e\\) VBlank limit reached.*AVC decode: blank.*dialog UI: not drawn"
     )
 endif()

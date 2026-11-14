@@ -26,6 +26,7 @@
 #include <repsp/hle/kernel.h>
 #include <repsp/hle/mpeg.h>
 #include <repsp/hle/sascore.h>
+#include <repsp/hle/utility.h>
 #include <repsp/platform/guarded_run.h>
 #include <repsp/platform/input.h>
 #include <repsp/platform/path.h>
@@ -59,6 +60,8 @@ void PrintUsage(const char* prog)
               << "  --headless             Run without opening a display window\n"
               << "  --max-vblanks <n>      Stop execution after <n> VBlanks (0 = unlimited)\n"
               << "  --input-script <path>  Deterministic controller script (<vblank> <button names>)\n"
+              << "  --save-dir <path>      Directory for sceUtility savedata slots (default: user data/savedata)\n"
+              << "  --dialog-answer <ans>  Auto answer for Yes/No utility dialogs: yes or no (default: yes)\n"
               << "  --lift-check           Execute recompiled code up to the first firmware call\n"
               << "  --help, -h             Show this help message\n"
               << "  --version, -v          Show version\n";
@@ -351,7 +354,9 @@ int RunBoot(const std::filesystem::path& game_dir,
             const redmp1::IdentifyResult& idResult,
             bool headless,
             uint32_t max_vblanks,
-            const std::filesystem::path& input_script_path)
+            const std::filesystem::path& input_script_path,
+            const std::filesystem::path& save_dir,
+            repsp::hle::utility::DialogAnswer yes_no_answer)
 {
     std::vector<InputScriptEntry> input_script;
     if (!input_script_path.empty())
@@ -462,6 +467,23 @@ int RunBoot(const std::filesystem::path& game_dir,
     repsp::hle::atrac::Register();
     repsp::hle::mpeg::Register();
 
+    repsp::hle::utility::Config utility_cfg;
+    utility_cfg.save_root = save_dir.empty()
+                                ? (repsp::platform::GetUserDataDirectory("redmp1") / "savedata")
+                                : save_dir;
+    repsp::hle::utility::Register(utility_cfg);
+    repsp::hle::utility::SetDialogPolicy(
+        [yes_no_answer](repsp::hle::utility::DialogKind,
+                        const std::string&,
+                        repsp::hle::utility::ChoiceKind choice)
+        {
+            if (choice == repsp::hle::utility::ChoiceKind::kYesNo)
+            {
+                return yes_no_answer;
+            }
+            return repsp::hle::utility::DialogAnswer::kConfirm;
+        });
+
     repsp::runtime::Scheduler& sched = repsp::runtime::GetScheduler();
     int32_t entry_tid = sched.CreateThread(
         cfg.first_thread_name,
@@ -473,7 +495,9 @@ int RunBoot(const std::filesystem::path& game_dir,
     if (entry_tid < 0)
     {
         std::cerr << "[boot] Error: CreateThread failed: 0x" << std::hex << entry_tid << std::dec << "\n";
+        repsp::hle::utility::SetDialogPolicy(nullptr);
         repsp::hle::ctrl::SetInputSource(nullptr);
+        repsp::hle::utility::Shutdown();
         repsp::hle::mpeg::Shutdown();
         repsp::hle::atrac::Shutdown();
         repsp::hle::sascore::Shutdown();
@@ -521,7 +545,10 @@ int RunBoot(const std::filesystem::path& game_dir,
     const std::string sas_stats = repsp::hle::sascore::FormatStats();
     const std::string atrac_stats = repsp::hle::atrac::FormatStats();
     const std::string mpeg_stats = repsp::hle::mpeg::FormatStats();
+    const std::string utility_stats = repsp::hle::utility::FormatStats();
+    repsp::hle::utility::SetDialogPolicy(nullptr);
     repsp::hle::ctrl::SetInputSource(nullptr);
+    repsp::hle::utility::Shutdown();
     repsp::hle::mpeg::Shutdown();
     repsp::hle::atrac::Shutdown();
     repsp::hle::sascore::Shutdown();
@@ -595,6 +622,7 @@ int RunBoot(const std::filesystem::path& game_dir,
               << "  " << sas_stats << "\n"
               << "  " << atrac_stats << "\n"
               << "  " << mpeg_stats << "\n"
+              << "  " << utility_stats << "\n"
               << "==============================\n";
 
     repsp::hle::kernel::PrintKernelSummary();
@@ -652,6 +680,8 @@ int main(int argc, char* argv[])
     std::filesystem::path game_dir = arg1;
     std::filesystem::path variants_path;
     std::filesystem::path input_script_path;
+    std::filesystem::path save_dir;
+    bool dialog_answer_yes = true;
     bool lift_check = false;
     bool headless = false;
     uint32_t max_vblanks = 0;
@@ -671,6 +701,38 @@ int main(int argc, char* argv[])
                 return 1;
             }
             input_script_path = argv[++i];
+        }
+        else if (opt == "--save-dir")
+        {
+            if (i + 1 >= argc)
+            {
+                std::cerr << "Error: --save-dir requires a directory path.\n";
+                return 1;
+            }
+            save_dir = argv[++i];
+        }
+        else if (opt == "--dialog-answer")
+        {
+            if (i + 1 >= argc)
+            {
+                std::cerr << "Error: --dialog-answer requires 'yes' or 'no'.\n";
+                return 1;
+            }
+            std::string ans = argv[++i];
+            if (ans == "yes")
+            {
+                dialog_answer_yes = true;
+            }
+            else if (ans == "no")
+            {
+                dialog_answer_yes = false;
+            }
+            else
+            {
+                std::cerr << "Error: Invalid --dialog-answer value: " << ans
+                          << " (expected 'yes' or 'no')\n";
+                return 1;
+            }
         }
         else if (opt == "--lift-check")
         {
@@ -737,11 +799,15 @@ int main(int argc, char* argv[])
     }
 
 #if REDMP1_HAVE_RECOMP
-    return RunBoot(game_dir, result, headless, max_vblanks, input_script_path);
+    return RunBoot(game_dir, result, headless, max_vblanks, input_script_path, save_dir,
+                   dialog_answer_yes ? repsp::hle::utility::DialogAnswer::kYes
+                                     : repsp::hle::utility::DialogAnswer::kNo);
 #else
     (void)headless;
     (void)max_vblanks;
     (void)input_script_path;
+    (void)save_dir;
+    (void)dialog_answer_yes;
     return 0;
 #endif
 }
