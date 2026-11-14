@@ -10,6 +10,7 @@
 | [first-frame.md](first-frame.md) | GE·디스플레이 초기화 흐름, GE 통계, `sceCtrlSetSamplingMode`~`sceMpegInit` 진행 경과 |
 | [audio.md](audio.md) | `sceAudio`·`sceSasCore`·`sceAtrac3plus` 초기화, 오디오 스레드 구조 및 스트리밍 경로 |
 | [video.md](video.md) | `sceMpeg` 초기화, `opening.pmf` PSMF/PES/AU 구성, 스킵 후 `"NOW LOADING"` 전환 |
+| [savedata.md](savedata.md) | `sceUtility` 세이브 데이터(`ULKS46050/SD.BIN`) 분기, `PARAM.SFO` 메타데이터, 메시지 다이얼로그 흐름 |
 
 ---
 
@@ -25,3 +26,4 @@ Findings from the original disc and executable, by topic, marked **confirmed**, 
 | [first-frame.md](first-frame.md) | GE/display initialization flow, GE stats, `sceCtrlSetSamplingMode` to `sceMpegInit` progression |
 | [audio.md](audio.md) | `sceAudio`, `sceSasCore`, and `sceAtrac3plus` initialization, audio threads, and streaming paths |
 | [video.md](video.md) | `sceMpeg` initialization, `opening.pmf` PSMF/PES/AU layout, skip transition to `"NOW LOADING"` |
+| [savedata.md](savedata.md) | `sceUtility` save data (`ULKS46050/SD.BIN`) branches, `PARAM.SFO` metadata, message dialog flow |

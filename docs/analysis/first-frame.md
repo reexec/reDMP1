@@ -346,6 +346,26 @@ flowchart TD
   * `all.mp` 추가 비동기 읽기 후 **`sceUtility:sceUtilitySavedataInitStart (0x50C4CD57)`** 에서 분류 `(a)` (`Exit code: 0`)로 정지한다.
   * 무입력 `--max-vblanks 300` 3회는 출력 전체가 바이트 단위 100% 일치했고, `--input-script` 3회는 정지 NID·GE `411,657` 화소·AVC `143`/ATRAC `111` AU·스레드(4개)·열린 파일(2개)이 모두 일치했으며 호스트 오디오 스레드 타이밍에 따른 `frames_pulled`/`sceAudioGetChannelRestLength`(`±4`회)·`vblanks`(`313`/`314`)만 미세하게 달랐다.
 
+## 7. 세이브 데이터 이후 진행과 타이틀 화면 (`--max-vblanks 900`, **확인됨**)
+
+```mermaid
+flowchart TD
+    L["NOW LOADING (411,657 px) + all.mp 추가 읽기"] --> SD["sceUtilitySavedata / MsgDialog 분기 (savedata.md 참조)"]
+    SD --> BGM["all2.mp (fd=6) 열기 + 타이틀 BGM sceAtracSetDataAndGetID / LoopNum(-1)"]
+    BGM --> FADE["ABGR1555 더블 버퍼(0x04000000 <-> 0x04044000) 페이드인 (frame_0166..0174)"]
+    FADE --> TITLE["타이틀 화면 루프 (frame_0175..0405): DJMAX PORTABLE / PRESS START BUTTON"]
+    TITLE --> END["--max-vblanks 900 정지 (분류 e, Exit code: 0)"]
+```
+
+* **세이브 데이터 이후 HLE 진행(세부 분석: [savedata.md](savedata.md))**:
+  * `sceUtilitySavedata*` 및 `sceUtilityMsgDialog*` 절차를 통과하면 `disc0:/PSP_GAME/USRDIR/all2.mp`(`fd=6`)를 추가로 열어 타이틀 화면 BGM(`sceAtracSetDataAndGetID`, `sceAtracSetLoopNum(-1)`)과 UI 리소스를 로드한다.
+* **그래픽·프리미티브 통계 및 화면 서술**:
+  * 빈 세이브 디렉터리 + `--dialog-answer yes` + `--max-vblanks 900` 실행 기준 `Display: mode=0 480x272 fb=0x04000000 stride=512 fmt=1 (ABGR1555) vblanks=900 presented=406`, `GE: 272 lists, 87,451 commands, 0 signals, 272 finishes`, `framebuffer 0x00044000 stride 512 psm 1, vertex type 0x00019F`, `vertices submitted: 17,134`, `triangle-strip: 4,150`, `sprites: 267`, **`pixels written: 136,925,016`**.
+  * 프레임 덤프 상에서 `frame_0000..0139`은 검은 화면(동영상 무효 디코더), `frame_0140..0164`는 `"NOW LOADING"` 배너(`1,951` 비검정 화소), `frame_0165`는 전환용 검은 화면, `frame_0166..0174`는 페이드인, `frame_0175..0405`는 타이틀 화면 본체(`129,909` 비검정 화소)다.
+  * 타이틀 화면은 푸른색 스피커 스택 배경 중앙에 `"DJMAX EMOTIONAL SENSE P"` 은색 원형 엠블럼, 하단에 크롬 질감의 `"PORTABLE"` 로고와 좌우 삼각형 화살표, `"PRESS START BUTTON"` 문구, 최하단 파란색 띠 위의 `"© 2004, 2006 PENTAVISION. ALL RIGHTS RESERVED."` 저작권 표기를 그린다(원형 엠블럼 아래와 오른쪽 화살표 옆에 1픽셀 폭의 마젠타색 `#FF00FF` 경계선이 남아 있음).
+* **3회 연속 실행 일치**:
+  * 동일한 초기 상태(빈 세이브 디렉터리)에서 `--max-vblanks 900` 3회를 실행한 결과 모두 분류 `(e)`(`Exit code: 0`), `Utility` 상태(`savedata_init=2, msgdialog_init=1, written=6284 B`), `Dialog[0]`(`btn=1`), 스레드 4개, 열린 파일 3개, 파티션 7개가 100% 일치했고, 호스트 실측 시간 기반 VBlank/더미 오디오 타이밍 차이로 `presented`(`415`/`413`/`415`), `GE`(`281`/`279`/`281` lists), `Audio`/`SAS`/`ATRAC` 프레임 수만 미세하게 달랐다.
+
 ---
 
 # GE Initialization and Pre-First-Frame Stop Analysis (`ULKS-46050`, `BOOT.BIN`)
@@ -442,3 +462,10 @@ flowchart TD
 * **Movie segment (details in [video.md](video.md))**: `BOOT.BIN` opens `disc0:/PSP_GAME/USRDIR/movie/opening.pmf` (`PSMF0014`, `480x272`) and alternates `RGBA8888` (`fmt=3`) framebuffers `0x04088000` ↔ `0x04110000`. At `--max-vblanks 300`, HLE yields `avcAu=153/153`, `atracAu=118/118`, and `presented=147` (~29.97 fps, opaque black `0xFF000000` frames).
 * **Post-skip rendered screen**: Pressing `START` tears down `sceMpeg`, re-initializes GE and `ABGR1555` double buffers (`0x04000000` ↔ `0x04044000`), executes `8` GE lists (`749` commands, `18` vertices, `3` triangle-strips, `3` sprites, **`411,657` pixels written**), and displays a black screen with a right-aligned white-outlined sound-wave **`"NOW LOADING"`** banner.
 * **Next stop point and 3-run determinism**: After additional `all.mp` async reads, execution stops at **`sceUtility:sceUtilitySavedataInitStart (0x50C4CD57)`** (`Class (a)`, `Exit code: 0`). Three consecutive `--max-vblanks 300` runs were 100% byte-identical; three consecutive `--input-script` runs matched identically on stop NID, GE `411,657` px, `143` AVC / `111` ATRAC AUs, 4 threads, and 2 open files, differing only in host-timed `frames_pulled`, `sceAudioGetChannelRestLength` (`±4`), and `vblanks` (`313`/`314`).
+
+## 7. Post-Savedata Progression and Title Screen (`--max-vblanks 900`, **Confirmed**)
+
+* **Post-savedata HLE progression (details in [savedata.md](savedata.md))**: After passing `sceUtilitySavedata*` / `sceUtilityMsgDialog*`, `BOOT.BIN` opens `disc0:/PSP_GAME/USRDIR/all2.mp` (`fd=6`), starts the title-screen ATRAC3+ BGM (`sceAtracSetDataAndGetID`, `sceAtracSetLoopNum(-1)`), and loops on the title screen.
+* **Graphics stats and visual description**: Under empty save dir + `--dialog-answer yes` + `--max-vblanks 900`, `Display: mode=0 480x272 fb=0x04000000 stride=512 fmt=1 (ABGR1555) vblanks=900 presented=406`, `GE: 272 lists, 87,451 commands, 0 signals, 272 finishes`, `framebuffer 0x00044000 stride 512 psm 1, vertex type 0x00019F`, `vertices submitted: 17,134`, `triangle-strip: 4,150`, `sprites: 267`, **`pixels written: 136,925,016`**.
+  * Dumped frames show: `frame_0000..0139` black (`opening.pmf`), `frame_0140..0164` `"NOW LOADING"` (`1,951` nonzero pixels), `frame_0165` black transition, `frame_0166..0174` fade-in, and `frame_0175..0405` the full title screen (`129,909` nonzero pixels): blue speaker-stack background, central silver `"DJMAX EMOTIONAL SENSE P"` emblem, chrome `"PORTABLE"` wordmark with left/right arrows, `"PRESS START BUTTON"`, and bottom blue footer `"© 2004, 2006 PENTAVISION. ALL RIGHTS RESERVED."` (with thin 1px `#FF00FF` magenta lines visible below the emblem and beside the right arrow).
+* **3-run determinism**: Across 3 identical runs from an empty save dir (`--max-vblanks 900`), all 3 reached `Class (e)` (`Exit code: 0`) with identical `Utility` (`savedata_init=2, msgdialog_init=1, written=6284 B`), `Dialog[0]` (`btn=1`), 4 threads, 3 open files, and 7 user partition blocks; only host wall-clock-coupled `presented` (`415`/`413`/`415`), `GE` (`281`/`279`/`281` lists), and `Audio`/`SAS`/`ATRAC` frame counts differed slightly.

@@ -2,19 +2,21 @@
 
 이 문서는 사용자가 `redmp1`을 직접 실행해 커널·UMD HLE 부팅 상태와 NID 호출 추적을 확인하는 절차를 설명한다.
 
-* 관련 설계: [20261114-i013-mpeg.md](../design/20261114-i013-mpeg.md)
-* 관련 작업 로그: [20261114-i013-mpeg.md](../work-logs/20261114-i013-mpeg.md)
+* 관련 설계: [20261114-i015-utility.md](../design/20261114-i015-utility.md)
+* 관련 작업 로그: [20261114-i015-utility.md](../work-logs/20261114-i015-utility.md)
 
 ---
 
 ## 1. 기본 부팅 실행
 
 1. Win64 Release 빌드 후 게임 디렉터리(`roms/`)를 인자로 전달해 실행한다. 창 없이 실행하려면 `--headless`를 붙인다(오디오는 더미 풀 클록으로 구동). 제한된 VBlank 수만큼만 실행하려면 `--max-vblanks <N>`을 지정하며, 정해진 VBlank 시점에 컨트롤러 입력을 주입하려면 `--input-script <파일>`을 사용한다.
+   * `--save-dir <디렉터리>`: `ms0:/PSP/SAVEDATA`에 연결할 호스트 세이브 디렉터리를 지정한다. 생략하면 OS 사용자 데이터 디렉터리(`SDL_GetPrefPath` 기반) 아래 `savedata/`를 사용한다.
+   * `--dialog-answer <yes|no>`: 그리지 않는 Yes/No 메시지 다이얼로그의 응답을 지정한다(기본값 `yes`).
    ```powershell
    .\build\win64-release\Release\redmp1.exe roms --variants src\game\dmp1\recomp\variants.json --headless --max-vblanks 120
    ```
 2. 종료 후 출력되는 `[boot] === BOOT STOP REPORT ===`와 종료 코드를 확인한다.
-   * **분류 (a) (종료 코드 `0`)**: 비커널 NID 미구현 지점 도달 또는 정상 종료(`sceKernelExitGame` 포함). `--input-script`로 오프닝 무비를 건너뛰면 `sceUtility:sceUtilitySavedataInitStart (0x50C4CD57)`에서 정지한다.
+   * **분류 (a) (종료 코드 `0`)**: 비커널 NID 미구현 지점 도달 또는 정상 종료(`sceKernelExitGame` 포함). `--input-script`로 오프닝 무비를 건너뛰면 `sceUtilitySavedata`/`MsgDialog`를 통과해 타이틀 화면까지 진행하며 `--max-vblanks`로 종료할 수 있다.
 
 ### 기본 컨트롤러 입력 매핑 (`sceCtrl`)
 
@@ -30,7 +32,7 @@ GUI 실행 시 SDL3 UI 스레드가 키보드·첫 번째 게임패드 폴링과
    * **분류 (b) (종료 코드 `10` 또는 `11`)**: 커널 NID 미구현 또는 예기치 않은 런타임/HLE 정지.
    * **분류 (c) (종료 코드 `12`)**: CPU 폴트 또는 호스트 예외.
    * **분류 (e) (종료 코드 `0`)**: `--max-vblanks <N>` 상한 도달 정지.
-   * 정지 보고서 하단에는 `Display:`, `Ctrl:`, `GE:`, `Audio:`, `SAS:`, `ATRAC decode:`, `AVC decode:` 통계 줄이 출력된다.
+   * 정지 보고서 하단에는 `Display:`, `Ctrl:`, `GE:`, `Audio:`, `SAS:`, `ATRAC decode:`, `AVC decode:`, `Utility:`, `Dialog[i]:` 통계 줄이 출력된다.
 3. 프레임버퍼가 latch된 프레임을 BMP로 저장하려면 `REPSP_FRAME_DUMP=<디렉터리>`와 `REPSP_FRAME_DUMP_LIMIT=<N>`을 설정한다.
 
 ### `--input-script <파일>` 형식
@@ -69,8 +71,8 @@ $env:REPSP_HLE_TRACE = "1"
 
 This guide describes how to run `redmp1` to inspect kernel/UMD HLE boot behavior and trace NID calls.
 
-* Related design: [20261114-i013-mpeg.md](../design/20261114-i013-mpeg.md)
-* Related work log: [20261114-i013-mpeg.md](../work-logs/20261114-i013-mpeg.md)
+* Related design: [20261114-i015-utility.md](../design/20261114-i015-utility.md)
+* Related work log: [20261114-i015-utility.md](../work-logs/20261114-i015-utility.md)
 
 ## 1. Default Boot Execution
 
@@ -78,8 +80,8 @@ This guide describes how to run `redmp1` to inspect kernel/UMD HLE boot behavior
 .\build\win64-release\Release\redmp1.exe roms --variants src\game\dmp1\recomp\variants.json --headless --max-vblanks 120
 ```
 
-Pass `--max-vblanks <N>` to stop deterministically after `N` VBlanks, and `--input-script <path>` to inject timed controller state (audio uses a dummy pull clock under `--headless`, whereas windowed mode opens the SDL3 audio stream). Check `[boot] === BOOT STOP REPORT ===` and the exit code:
-* **Class (a) (`0`)**: Stopped at an unimplemented non-kernel NID (e.g., `sceUtility:sceUtilitySavedataInitStart (0x50C4CD57)` after skipping the opening movie) or exited cleanly (`sceKernelExitGame`).
+Pass `--max-vblanks <N>` to stop deterministically after `N` VBlanks, `--input-script <path>` to inject timed controller state, `--save-dir <dir>` to override the host `ms0:/PSP/SAVEDATA` directory (defaults to `savedata/` under `SDL_GetPrefPath`), and `--dialog-answer <yes|no>` to answer undrawn yes/no message dialogs (default `yes`). Under `--headless`, audio uses a dummy pull clock, whereas windowed mode opens the SDL3 audio stream. Check `[boot] === BOOT STOP REPORT ===` and the exit code:
+* **Class (a) (`0`)**: Stopped at an unimplemented non-kernel NID or exited cleanly (`sceKernelExitGame`). After skipping the opening movie with `--input-script`, execution proceeds past `sceUtilitySavedata`/`MsgDialog` into the title screen until `--max-vblanks`.
 
 ### Default Controller Input Mapping (`sceCtrl`)
 
@@ -95,7 +97,7 @@ In GUI mode the SDL3 UI thread polls keyboard input and Gamepad #0 alongside the
 * **Class (b) (`10` or `11`)**: Unimplemented kernel NID or unexpected runtime/HLE stop.
 * **Class (c) (`12`)**: CPU fault or host exception.
 * **Class (e) (`0`)**: Reached VBlank limit (`--max-vblanks <N>`).
-* The stop report prints `Display:`, `Ctrl:`, `GE:`, `Audio:`, `SAS:`, `ATRAC decode:`, and `AVC decode:` summary lines.
+* The stop report prints `Display:`, `Ctrl:`, `GE:`, `Audio:`, `SAS:`, `ATRAC decode:`, `AVC decode:`, `Utility:`, and `Dialog[i]:` summary lines.
 
 Set `REPSP_FRAME_DUMP=<dir>` and `REPSP_FRAME_DUMP_LIMIT=<N>` to dump latched frames as BMP files.
 
