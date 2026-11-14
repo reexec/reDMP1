@@ -14,7 +14,19 @@
    .\build\win64-release\Release\redmp1.exe roms --variants src\game\dmp1\recomp\variants.json --headless
    ```
 2. 종료 후 출력되는 `[boot] === BOOT STOP REPORT ===`와 종료 코드를 확인한다.
-   * **분류 (a) (종료 코드 `0`)**: 비커널 NID 미구현 지점 도달 또는 정상 종료(`sceKernelExitGame` 포함). 현재 기준은 `sceCtrl:sceCtrlSetSamplingMode (0x1F4011E6)` 정지다.
+   * **분류 (a) (종료 코드 `0`)**: 비커널 NID 미구현 지점 도달 또는 정상 종료(`sceKernelExitGame` 포함). 현재 기준은 `sceAudio:sceAudioChReserve (0x5EC81C55)` 정지다.
+
+### 기본 컨트롤러 입력 매핑 (`sceCtrl`)
+
+GUI 실행 시 SDL3 UI 스레드가 키보드와 첫 번째 게임패드를 폴링하며, `--headless` 실행 시에는 중립 상태(버튼 `0`, 아날로그 `128, 128`)만 공급한다.
+
+| PSP 입력 | 키보드 | 게임패드 (SDL3 1번 패드) |
+| --- | --- | --- |
+| D-Pad (Up / Right / Down / Left) | 방향키 | D-Pad |
+| Cross / Circle / Square / Triangle | `Z` / `X` / `A` / `S` | South / East / West / North |
+| L / R Trigger | `Q` / `W` | Left / Right Shoulder |
+| Start / Select | `Enter` / `Backspace` | Start / Back |
+| Analog Stick (`lx`, `ly`) | `I` / `J` / `K` / `L` | Left Stick X / Y |
    * **분류 (b) (종료 코드 `10` 또는 `11`)**: 커널 NID 미구현 또는 예기치 않은 런타임/HLE 정지.
    * **분류 (c) (종료 코드 `12`)**: CPU 폴트 또는 호스트 예외.
 3. 프레임버퍼가 latch된 프레임을 BMP로 저장하려면 `REPSP_FRAME_DUMP=<디렉터리>`와 `REPSP_FRAME_DUMP_LIMIT=<N>`을 설정한다.
@@ -53,7 +65,19 @@ This guide describes how to run `redmp1` to inspect kernel/UMD HLE boot behavior
 ```
 
 Check `[boot] === BOOT STOP REPORT ===` and the exit code:
-* **Class (a) (`0`)**: Stopped at an unimplemented non-kernel NID (currently `sceCtrl:sceCtrlSetSamplingMode (0x1F4011E6)`) or exited cleanly (`sceKernelExitGame`).
+* **Class (a) (`0`)**: Stopped at an unimplemented non-kernel NID (currently `sceAudio:sceAudioChReserve (0x5EC81C55)`) or exited cleanly (`sceKernelExitGame`).
+
+### Default Controller Input Mapping (`sceCtrl`)
+
+In GUI mode the SDL3 UI thread polls keyboard input and Gamepad #0; under `--headless` only neutral controller state (buttons `0`, analog `128, 128`) is supplied.
+
+| PSP Input | Keyboard | Gamepad (SDL3 Pad #0) |
+| --- | --- | --- |
+| D-Pad (Up / Right / Down / Left) | Arrow Keys | D-Pad |
+| Cross / Circle / Square / Triangle | `Z` / `X` / `A` / `S` | South / East / West / North |
+| L / R Trigger | `Q` / `W` | Left / Right Shoulder |
+| Start / Select | `Enter` / `Backspace` | Start / Back |
+| Analog Stick (`lx`, `ly`) | `I` / `J` / `K` / `L` | Left Stick X / Y |
 * **Class (b) (`10` or `11`)**: Unimplemented kernel NID or unexpected runtime/HLE stop.
 * **Class (c) (`12`)**: CPU fault or host exception.
 

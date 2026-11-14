@@ -271,6 +271,35 @@ sequenceDiagram
 * **라이브러리 / NID**: `sceCtrl:sceCtrlSetSamplingMode (0x1F4011E6)`
 * **3회 실행 결정성**: `REPSP_HLE_TRACE=1`로 3회 연속 실행한 결과, 실시간 VBlank 카운트(`vblanks=0..2`)를 제외한 모든 HLE 호출 인자·반환값, GE 통계, 정지 지점이 100% 일치했습니다.
 
+## 4. 입력 설정 이후 진행 및 다음 정지 지점 (**확인됨**)
+
+```mermaid
+flowchart TD
+    F["sceDisplaySetFrameBuf(0x04044000, 512, 1, 1)"] --> C1["sceCtrlSetSamplingMode(1) -> 0 / sceCtrlSetSamplingCycle(0) -> 0"]
+    C1 --> C2["2차 SetFrameBuf(0x04044000) / SetSamplingMode(1) -> 1 / SetSamplingCycle(0) -> 0"]
+    C2 --> U1["sceUmdActivate(1, 0x088F3430) -> 0 / sceUmdGetDriveStat -> 0x32 / sceKernelSetGPO(0)"]
+    U1 --> P1["오디오·코덱 PRX 로드 및 시작: sc_sascore.prx (0xC), audiocodec.prx (0xD), libatrac3plus.prx (0xE)"]
+    P1 --> T1["sceKernelGetSystemTimeWide(0x08B97730) / sceKernelSetGPO(1..5)"]
+    T1 --> IO1["all.mp 비동기 열기·크기 조회(436,108,959B)·읽기(16B + 172,340B)"]
+    IO1 --> IO2["all2.mp 비동기 열기·크기 조회(841,512,079B)·읽기(16B + 66,780B)"]
+    IO2 --> S["정지: sceAudio:sceAudioChReserve (0x5EC81C55)"]
+```
+
+* **`sceCtrl` 및 두 번째 프레임버퍼 설정**:
+  * 첫 번째 `sceDisplaySetFrameBuf(0x04044000, 512, 1, 1)` 직후 `sceCtrlSetSamplingMode(1)`(반환 `0`, 이전 모드)과 `sceCtrlSetSamplingCycle(0)`(반환 `0`)을 호출하고, 이어서 같은 인자로 두 번째 `sceDisplaySetFrameBuf`·`sceCtrlSetSamplingMode(1)`(반환 `1`, 직전 설정 모드)·`sceCtrlSetSamplingCycle(0)`(반환 `0`)을 호출한다.
+  * 정지 시점까지 `sceCtrlReadBufferPositive`와 `sceDmacMemcpy` 호출 횟수는 모두 `0`이다.
+* **UMD 활성화 및 오디오 PRX 로드**:
+  * `sceUmdActivate(1, 0x088F3430)` → `0`, `sceUmdGetDriveStat` → `0x32`, `sceKernelSetGPO(0x00)`을 호출한 뒤 `ModuleMgrForUser`로 PRX 3종(`sc_sascore.prx` [`0x088F34E4`, `uid=0xC`], `audiocodec.prx` [`0x088F3514`, `uid=0xD`], `libatrac3plus.prx` [`0x088F3544`, `uid=0xE`])을 순서대로 `sceKernelLoadModule`/`sceKernelStartModule` 한다.
+  * 이어서 `sceKernelGetSystemTimeWide(0x08B97730)`를 1회 호출하고 `sceKernelSetGPO(1)`..`sceKernelSetGPO(5)`를 순차 기록한다.
+* **아카이브(`all.mp`, `all2.mp`) 비동기 초기화 I/O**:
+  * 각 I/O 단계 전후를 세마포어(`uid=0xA`, `sceKernelWaitSema`/`sceKernelSignalSema`)와 `sceIoWaitAsyncCB`로 동기화한다.
+  * `disc0:/PSP_GAME/USRDIR/all.mp`(`fd=3`): `sceIoOpenAsync(..., flags=1)` → `sceIoLseekAsync(SEEK_END)` 결과 `436,108,959`바이트 → `sceIoLseek(SEEK_SET, 0)` → `sceIoReadAsync` `16`바이트(`0x0896E7AC`) + `172,340`바이트(`0x2A134`, `0x09ACD9F0`), 최종 오프셋 `172,356`.
+  * `disc0:/PSP_GAME/USRDIR/all2.mp`(`fd=4`): `sceIoOpenAsync(..., flags=1)` → `sceIoLseekAsync(SEEK_END)` 결과 `841,512,079`바이트 → `sceIoLseek(SEEK_SET, 0)` → `sceIoReadAsync` `16`바이트(`0x0896E7F4`) + `66,780`바이트(`0x104DC`, `0x09AF7B30`), 최종 오프셋 `66,796`.
+* **프레임버퍼·GE·다음 정지 지점과 결정성**:
+  * GE 통계는 `2 lists, 282 commands, 0 signals, 2 finishes`, `vertices submitted: 0`, `pixels written: 0`으로 issue #7과 동일하다. VBlank 경과로 `sceDisplaySetFrameBuf`의 `0x04044000`(`480x272`, `stride=512`, `fmt=1`) 버퍼가 1회 래치(`presented=1`)되었으나 드로잉 프리미티브가 없어 검은 화면(0이 아닌 RGB 화소 `0`개)이다.
+  * **다음 정지 지점**: 분류 `(a) Unimplemented non-kernel NID` (`Exit code: 0`), `sceAudio:sceAudioChReserve (0x5EC81C55)`.
+  * **3회 연속 실행 일치**: 3회 모두 `Class (a)` 정지 NID, 124건의 비 `CpuSuspendIntr`/`CpuResumeIntr` HLE·I/O·ModuleMgr 호출 순서와 인자, GE·스레드·열린 파일 상태가 100% 일치했다. 실시간 경과에 따라 `sceKernelGetSystemTimeWide` 반환값(`0x0000109D`/`0x00000FDB`/`0x00001038`)과 `vblanks`/`Ctrl: produced` 수(`2`/`2`/`3`)만 달라졌다.
+
 ---
 
 # GE Initialization and Pre-First-Frame Stop Analysis (`ULKS-46050`, `BOOT.BIN`)
@@ -306,3 +335,32 @@ The complete opcode-and-count table for both lists is given in the Korean sectio
 
 * **Class**: `(a) Unimplemented non-kernel NID` (`Exit code: 0`), `sceCtrl:sceCtrlSetSamplingMode (0x1F4011E6)`.
 * **Determinism**: All 3 consecutive runs produced identical HLE call traces, GE statistics, and stop points (only wall-clock `vblanks` varied between `0` and `2`).
+
+## 4. Post-Input Progression and Next Stop Point (**Confirmed**)
+
+```mermaid
+flowchart TD
+    F["sceDisplaySetFrameBuf(0x04044000, 512, 1, 1)"] --> C1["sceCtrlSetSamplingMode(1) -> 0 / sceCtrlSetSamplingCycle(0) -> 0"]
+    C1 --> C2["2nd SetFrameBuf(0x04044000) / SetSamplingMode(1) -> 1 / SetSamplingCycle(0) -> 0"]
+    C2 --> U1["sceUmdActivate(1, 0x088F3430) -> 0 / sceUmdGetDriveStat -> 0x32 / sceKernelSetGPO(0)"]
+    U1 --> P1["Load & start audio/codec PRXs: sc_sascore.prx (0xC), audiocodec.prx (0xD), libatrac3plus.prx (0xE)"]
+    P1 --> T1["sceKernelGetSystemTimeWide(0x08B97730) / sceKernelSetGPO(1..5)"]
+    T1 --> IO1["all.mp async open / size query (436,108,959B) / read (16B + 172,340B)"]
+    IO1 --> IO2["all2.mp async open / size query (841,512,079B) / read (16B + 66,780B)"]
+    IO2 --> S["Stop: sceAudio:sceAudioChReserve (0x5EC81C55)"]
+```
+
+* **`sceCtrl` and second framebuffer setup**:
+  * Immediately after the first `sceDisplaySetFrameBuf(0x04044000, 512, 1, 1)`, `BOOT.BIN` calls `sceCtrlSetSamplingMode(1)` (returns `0`, previous mode) and `sceCtrlSetSamplingCycle(0)` (returns `0`), then repeats `sceDisplaySetFrameBuf`, `sceCtrlSetSamplingMode(1)` (returns `1`), and `sceCtrlSetSamplingCycle(0)` (returns `0`) with identical arguments.
+  * Up to the stop point, both `sceCtrlReadBufferPositive` and `sceDmacMemcpy` have `0` calls.
+* **UMD activation and audio PRX loads**:
+  * Calls `sceUmdActivate(1, 0x088F3430)` → `0`, `sceUmdGetDriveStat` → `0x32`, and `sceKernelSetGPO(0x00)`, then loads and starts 3 PRX modules sequentially via `ModuleMgrForUser` (`sceKernelLoadModule` / `sceKernelStartModule`): `sc_sascore.prx` (`0x088F34E4`, `uid=0xC`), `audiocodec.prx` (`0x088F3514`, `uid=0xD`), and `libatrac3plus.prx` (`0x088F3544`, `uid=0xE`).
+  * Calls `sceKernelGetSystemTimeWide(0x08B97730)` once and logs `sceKernelSetGPO(1)`..`sceKernelSetGPO(5)`.
+* **Asynchronous archive initialization I/O (`all.mp`, `all2.mp`)**:
+  * Synchronizes each I/O step around semaphore `uid=0xA` (`sceKernelWaitSema`/`sceKernelSignalSema`) and `sceIoWaitAsyncCB`.
+  * `disc0:/PSP_GAME/USRDIR/all.mp` (`fd=3`): `sceIoOpenAsync(..., flags=1)` → `sceIoLseekAsync(SEEK_END)` = `436,108,959` bytes → `sceIoLseek(SEEK_SET, 0)` → `sceIoReadAsync` `16` bytes (`0x0896E7AC`) + `172,340` bytes (`0x2A134`, `0x09ACD9F0`), ending at offset `172,356`.
+  * `disc0:/PSP_GAME/USRDIR/all2.mp` (`fd=4`): `sceIoOpenAsync(..., flags=1)` → `sceIoLseekAsync(SEEK_END)` = `841,512,079` bytes → `sceIoLseek(SEEK_SET, 0)` → `sceIoReadAsync` `16` bytes (`0x0896E7F4`) + `66,780` bytes (`0x104DC`, `0x09AF7B30`), ending at offset `66,796`.
+* **Framebuffer, GE state, next stop point, and determinism**:
+  * GE statistics remain `2 lists, 282 commands, 0 signals, 2 finishes`, `vertices submitted: 0`, `pixels written: 0` (same as issue #7). One VBlank latched `0x04044000` (`480x272`, `stride=512`, `fmt=1`, `presented=1`), producing an all-black frame (`0` non-zero RGB pixels) because no draw primitives were issued.
+  * **Next stop point**: Class `(a) Unimplemented non-kernel NID` (`Exit code: 0`), `sceAudio:sceAudioChReserve (0x5EC81C55)`.
+  * **3-run determinism**: Across 3 consecutive runs, all 124 non-`CpuSuspendIntr`/`CpuResumeIntr` HLE/I/O/ModuleMgr call sequences and arguments, GE/thread/open-file states, and the Class `(a)` stop point matched 100%; only wall-clock-dependent `sceKernelGetSystemTimeWide` return values (`0x0000109D`/`0x00000FDB`/`0x00001038`) and `vblanks`/`Ctrl: produced` counts (`2`/`2`/`3`) varied.
