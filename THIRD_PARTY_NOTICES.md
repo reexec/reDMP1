@@ -25,3 +25,13 @@ reDMP1 incorporates or links the following third-party open-source projects:
 * Pin: `release-3.4.x` (`ee239da42bd043039fddbad0622645f54bf5a640`)
 * License: zlib License (Copyright (C) 1997-2026 Sam Lantinga)
 * Usage: Platform windowing, input events, and audio output.
+
+## 3. FFmpeg (Optional Dynamic Codec Plugin `repsp_codec_ffmpeg`)
+
+* Upstream: https://ffmpeg.org/
+* License: GNU Lesser General Public License (LGPL) version 2.1 or later (GPL builds are prohibited)
+* Usage: Optional runtime-loaded plugin (`REDMP1_CODEC_FFMPEG=ON`, `OFF` by default) for ATRAC3/ATRAC3plus audio and H.264 video decoding. Neither FFmpeg source nor binaries are stored in this repository.
+* Distribution requirements (when bundling FFmpeg LGPL shared libraries in a release):
+  1. Include this notice and the corresponding LGPL license text (`LICENSE.txt` / `COPYING.LGPL*`).
+  2. Provide corresponding FFmpeg source code or build-pin / source offer instructions (matching the exact BtbN `lgpl-shared` release tag).
+  3. Keep dynamic linking replaceable so users can swap `avcodec-*.dll` / `avutil-*.dll` / `swresample-*.dll` (or `.so` equivalents) without rebuilding `redmp1`.

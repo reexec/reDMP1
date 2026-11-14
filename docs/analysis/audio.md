@@ -67,9 +67,15 @@ flowchart TD
 * **BGM (`sceAtrac3plus` → `ch1`)**: 화면 전환(타이틀 → 곡 선택 → 플레이)마다 이전 스트림을 해제하고 새 스트림을 여는 패턴(`active=1 created=3 released=2`, `frames=664`, `samples=679936`, `streamAdded=229296`)으로 `all2.mp` 내 ATRAC3+ 트랙을 재생합니다.
 * **효과음·키음 (`sceSasCore` → `ch2`)**: 메뉴 이동/결정 및 플레이 중 `__sceSasSetVoice`/`SetPitch`/`SetADSR`/`SetVolume`/`SetKeyOn` `7`회, `SetKeyOff` `48`회가 호출되어 256샘플 단위로 `ch2`에 믹싱됩니다.
 
-## 6. 미확정 사항 (**미확정**)
+## 6. FFmpeg 코덱 플러그인 재생 검증 (**확인됨**)
 
-* 실제 BGM(`AT3`/`AT3+`) 트랙별 루프 구간, 음량 밸런스 및 개별 키음 파형 품질은 실제 ATRAC3plus 디코더 통합 이후 청취 검증이 필요하다.
+* `REDMP1_CODEC_FFMPEG=ON`(`repsp_codec_ffmpeg.dll`, FFmpeg `libavcodec 62` LGPL 동적 링크) 환경에서:
+  * **오프닝 무비 (`--max-vblanks 450`)**: `sceMpegAtracDecode` `171/171` 프레임 디코딩 성공(`ATRAC decode: ffmpeg`), `REPSP_AUDIO_DUMP` WAV 기준 2ch 44.1 kHz, `331,264`프레임, RMS `841.2`, 피크 `8477`, 클리핑 `0`.
+  * **타이틀 → 곡 선택 → 플레이 (`--max-vblanks 2100`)**: `sceAtrac3plus` `active=1 created=3 released=2 frames=739 samples=756736` 및 `sceMpegAtracDecode` `110/110` 디코딩 성공, WAV `1,544,960`프레임, RMS `5147.6`.
+
+## 7. 미확정 사항 (**미확정**)
+
+* 실제 BGM(`AT3`/`AT3+`) 트랙별 루프 구간, 음량 밸런스 및 개별 키음 파형 품질은 장시간 청취 검증이 추가로 필요하다.
 
 ---
 
