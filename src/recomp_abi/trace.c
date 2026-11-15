@@ -166,8 +166,11 @@ static int copy_sp_hist(const sp_table_t *tbl, psp_sp_site *out, int max) {
     return n;
 }
 
+void redmp1_note_guest_entry(uint32_t addr);
+
 void psp_trace_enter(uint32_t addr) {
 #ifdef REDMP1_TRACE_GUEST
+    redmp1_note_guest_entry(addr);
     record_host_stack(addr);
 #endif
     ensure_trace_init();

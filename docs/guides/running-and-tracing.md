@@ -15,6 +15,7 @@
    * `--audio-latency-ms <N>`: 호스트 측 오디오 중간 버퍼의 목표 지연(ms, 기본값 `20`)을 지정한다.
    * `--save-dir <디렉터리>`: `ms0:/PSP/SAVEDATA`에 연결할 호스트 세이브 디렉터리를 지정한다. 생략하면 OS 사용자 데이터 디렉터리(`SDL_GetPrefPath` 기반) 아래 `savedata/`를 사용한다.
    * `--dialog-answer <yes|no>`: 그리지 않는 Yes/No 메시지 다이얼로그의 응답을 지정한다(기본값 `yes`).
+   * `--crash-dir <디렉터리>`, `--no-input-record`, `--debug-crash <kind>`: 실행별 로그·입력 녹화·크래시 보고서/미니덤프 저장 위치와 테스트 크래시를 제어한다(자세한 분석·재현 절차는 [crash-reporting.md](crash-reporting.md) 참고).
    ```powershell
    .\build\win64-release\Release\redmp1.exe roms --variants src\game\dmp1\recomp\variants.json --headless --max-vblanks 120
    ```
@@ -102,7 +103,7 @@ This guide describes how to run `redmp1` to inspect kernel/UMD HLE boot behavior
 .\build\win64-release\Release\redmp1.exe roms --variants src\game\dmp1\recomp\variants.json --headless --max-vblanks 120
 ```
 
-Pass `--max-vblanks <N>` to stop deterministically after `N` VBlanks, `--renderer <sw|gl>` to select the render backend (`gl` default in windowed mode, `sw` default with `--headless`; `gl` uses OpenGL 3.3 Core and falls back to `sw` with a 1-line warning if GL context creation fails; `--headless --renderer gl` uses a hidden GL window), `--scale <1..8>` to set window scale and GL internal FBO resolution (`480*scale x 272*scale`, default `2`), `--audio-latency-ms <N>` to set the host audio intermediate buffer target latency (default `20`), `--input-script <path>` to inject timed controller state, `--save-dir <dir>` to override the host `ms0:/PSP/SAVEDATA` directory (defaults to `savedata/` under `SDL_GetPrefPath`), and `--dialog-answer <yes|no>` to answer undrawn yes/no message dialogs (default `yes`). Under `--headless`, audio uses a dummy pull clock, whereas windowed mode opens the SDL3 audio stream. Check `[boot] === BOOT STOP REPORT ===` and the exit code:
+Pass `--max-vblanks <N>` to stop deterministically after `N` VBlanks, `--renderer <sw|gl>` to select the render backend (`gl` default in windowed mode, `sw` default with `--headless`; `gl` uses OpenGL 3.3 Core and falls back to `sw` with a 1-line warning if GL context creation fails; `--headless --renderer gl` uses a hidden GL window), `--scale <1..8>` to set window scale and GL internal FBO resolution (`480*scale x 272*scale`, default `2`), `--audio-latency-ms <N>` to set the host audio intermediate buffer target latency (default `20`), `--input-script <path>` to inject timed controller state, `--save-dir <dir>` to override the host `ms0:/PSP/SAVEDATA` directory (defaults to `savedata/` under `SDL_GetPrefPath`), `--dialog-answer <yes|no>` to answer undrawn yes/no message dialogs (default `yes`), and `--crash-dir <dir>` / `--no-input-record` / `--debug-crash <kind>` for crash capture and input recording (see [crash-reporting.md](crash-reporting.md)). Under `--headless`, audio uses a dummy pull clock, whereas windowed mode opens the SDL3 audio stream. Check `[boot] === BOOT STOP REPORT ===` and the exit code:
 * **Class (a) (`0`)**: Stopped at an unimplemented non-kernel NID or exited cleanly (`sceKernelExitGame`). After skipping the opening movie with `--input-script`, execution proceeds past `sceUtilitySavedata`/`MsgDialog` into the title screen until `--max-vblanks`.
 
 ### Default Controller Input Mapping (`sceCtrl`)

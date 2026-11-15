@@ -15,7 +15,18 @@
 #if REDMP1_HAVE_RECOMP
 #include <atomic>
 #include <chrono>
+#include <csignal>
+#include <cstdlib>
+#include <ctime>
 #include <iomanip>
+#include <stdexcept>
+#include <thread>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 #include "recomp_abi.h"
 #include <psprecomp/cpu.h>
 #include <psprecomp/dispatch.h>
@@ -31,12 +42,13 @@
 #include <repsp/hle/mpeg.h>
 #include <repsp/hle/sascore.h>
 #include <repsp/hle/utility.h>
+#include <repsp/platform/crash_handler.h>
 #include <repsp/platform/guarded_run.h>
-#include <repsp/platform/path.h>
 #include <repsp/platform/input.h>
 #include <repsp/platform/path.h>
 #include <repsp/platform/platform.h>
 #include <repsp/recomp/guest_cpu.h>
+#include <repsp/runtime/exec_history.h>
 #include <repsp/runtime/guest_memory.h>
 #include <repsp/runtime/nid_names.h>
 #include <repsp/runtime/nid_registry.h>
@@ -72,6 +84,9 @@ void PrintUsage(const char* prog)
               << "  --dialog-answer <ans>  Auto answer for Yes/No utility dialogs: yes or no (default: yes)\n"
               << "  --codec-plugin <path>  Path to optional codec plugin shared library\n"
               << "  --no-codec-plugin      Disable optional codec plugin (use silent/blank)\n"
+              << "  --crash-dir <path>     Directory for crash reports & dumps (default: user data/crashes)\n"
+              << "  --no-input-record      Disable automatic controller input recording\n"
+              << "  --debug-crash <kind>   Trigger test crash (access_violation|abort|cpp_exception|unjoined_thread|mutex_held_stop)\n"
               << "  --lift-check           Execute recompiled code up to the first firmware call\n"
               << "  --help, -h             Show this help message\n"
               << "  --version, -v          Show version\n";
@@ -360,6 +375,198 @@ bool IsKernelLibrary(const std::string& lib)
     return false;
 }
 
+struct CrashExtraContext
+{
+    std::string app_version;
+    std::string disc_id;
+    std::string disc_version;
+    std::string executable_name;
+    std::string executable_sha1;
+    std::string renderer;
+    int scale = 2;
+    bool headless = false;
+    uint32_t audio_latency_ms = 20;
+    uint32_t max_vblanks = 0;
+    std::string codec_plugin_status;
+    bool input_script_used = false;
+    bool input_recording = true;
+    bool custom_save_dir = false;
+};
+
+void FormatAppCrashExtra(void* user_data, repsp::platform::CrashTextBuffer* out)
+{
+    if (user_data == nullptr || out == nullptr)
+    {
+        return;
+    }
+    const auto* ctx = static_cast<const CrashExtraContext*>(user_data);
+    out->Append("app_version: ");
+    out->Append(ctx->app_version.c_str());
+    out->Append("\ngame_disc_id: ");
+    out->Append(ctx->disc_id.c_str());
+    out->Append("\ngame_disc_version: ");
+    out->Append(ctx->disc_version.c_str());
+    out->Append("\ngame_executable: ");
+    out->Append(ctx->executable_name.c_str());
+    out->Append("\ngame_sha1: ");
+    out->Append(ctx->executable_sha1.c_str());
+    out->Append("\nrenderer: ");
+    out->Append(ctx->renderer.c_str());
+    char num_buf[256]{};
+    std::snprintf(num_buf, sizeof(num_buf),
+                  "\nscale: %d\nheadless: %s\naudio_latency_ms: %u\nmax_vblanks: %u\n",
+                  ctx->scale,
+                  ctx->headless ? "true" : "false",
+                  ctx->audio_latency_ms,
+                  ctx->max_vblanks);
+    out->Append(num_buf);
+    out->Append("codec_plugin: ");
+    out->Append(ctx->codec_plugin_status.c_str());
+    std::snprintf(num_buf, sizeof(num_buf),
+                  "\ninput_script: %s\ninput_recording: %s\ncustom_save_dir: %s\n",
+                  ctx->input_script_used ? "yes" : "no",
+                  ctx->input_recording ? "on" : "off",
+                  ctx->custom_save_dir ? "yes" : "no");
+    out->Append(num_buf);
+}
+
+std::filesystem::path MakeUniqueCrashRunDir(const std::filesystem::path& base_dir)
+{
+    std::error_code ec;
+    std::filesystem::create_directories(base_dir, ec);
+
+    const std::time_t now = std::time(nullptr);
+    std::tm tm_utc{};
+#ifdef _WIN32
+    gmtime_s(&tm_utc, &now);
+#else
+    gmtime_r(&now, &tm_utc);
+#endif
+    char stamp[32]{};
+    std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tm_utc);
+
+    std::filesystem::path candidate = base_dir / stamp;
+    for (int suffix = 1; std::filesystem::exists(candidate, ec) && suffix < 1000; ++suffix)
+    {
+        candidate = base_dir / (std::string(stamp) + "-" + std::to_string(suffix));
+    }
+    std::filesystem::create_directories(candidate, ec);
+    return candidate;
+}
+
+bool DirectoryHasCrashOutput(const std::filesystem::path& dir)
+{
+    std::error_code ec;
+    if (!std::filesystem::exists(dir, ec) || !std::filesystem::is_directory(dir, ec))
+    {
+        return false;
+    }
+    for (const auto& entry : std::filesystem::directory_iterator(dir, ec))
+    {
+        const std::string ext = entry.path().extension().string();
+        const std::string name = entry.path().filename().string();
+        if (ext == ".dmp" || name.rfind("crash_report_", 0) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void PruneCrashBaseDirectory(const std::filesystem::path& base_dir, const std::filesystem::path& current_run_dir)
+{
+    std::error_code ec;
+    if (!DirectoryHasCrashOutput(current_run_dir))
+    {
+        std::filesystem::remove_all(current_run_dir, ec);
+    }
+    if (!std::filesystem::exists(base_dir, ec))
+    {
+        return;
+    }
+    for (const auto& entry : std::filesystem::directory_iterator(base_dir, ec))
+    {
+        if (entry.is_directory(ec) && !DirectoryHasCrashOutput(entry.path()))
+        {
+            std::filesystem::remove_all(entry.path(), ec);
+        }
+    }
+}
+
+[[noreturn]] void ThrowDebugCrashException()
+{
+    throw std::runtime_error("debug crash cpp exception");
+}
+
+[[noreturn]] void ThrowDebugCrashInNoexcept() noexcept
+{
+    ThrowDebugCrashException();
+}
+
+bool TriggerDebugCrash(const std::string& kind, repsp::runtime::Scheduler& sched)
+{
+#ifdef _WIN32
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+    using WerSetFlagsFn = HRESULT(WINAPI*)(DWORD);
+    if (HMODULE k32 = GetModuleHandleA("kernel32.dll"))
+    {
+        FARPROC proc = GetProcAddress(k32, "WerSetFlags");
+        if (proc != nullptr)
+        {
+            WerSetFlagsFn wer_set_flags = nullptr;
+            std::memcpy(&wer_set_flags, &proc, sizeof(wer_set_flags));
+            wer_set_flags(0x24u);
+        }
+    }
+#endif
+    if (kind == "access_violation")
+    {
+        volatile int* bad = nullptr;
+        *bad = 42;
+        return true;
+    }
+    if (kind == "abort")
+    {
+        std::abort();
+    }
+    if (kind == "cpp_exception")
+    {
+        ThrowDebugCrashInNoexcept();
+    }
+    if (kind == "unjoined_thread")
+    {
+        std::thread t([]() {});
+        (void)t;
+        return true;
+    }
+    if (kind == "mutex_held_stop")
+    {
+        auto& mem = repsp::runtime::GetGuestMemory();
+        if (!mem.Initialize())
+        {
+            return false;
+        }
+        repsp::platform::SetCrashGuestMemoryRange(
+            reinterpret_cast<uintptr_t>(mem.Base()),
+            repsp::runtime::GuestMemory::kWindowSize);
+        repsp_guest_cpu_ops ops{};
+        ops.call_guest = [](uint32_t)
+        {
+            repsp::runtime::GetScheduler().TriggerMutexHeldStopForTest();
+        };
+        sched.Reset();
+        sched.SetCpuOps(&ops);
+        const int32_t tid = sched.CreateThread("mutex_held_worker", 0x08802345u, 0x20, 0x4000, 0, 0);
+        if (tid <= 0)
+        {
+            return false;
+        }
+        sched.Run(tid);
+        return true;
+    }
+    return false;
+}
+
 int RunBoot(const std::filesystem::path& game_dir,
             const redmp1::IdentifyResult& idResult,
             bool headless,
@@ -371,7 +578,10 @@ int RunBoot(const std::filesystem::path& game_dir,
             repsp::hle::utility::DialogAnswer yes_no_answer,
             const std::filesystem::path& codec_plugin_path,
             bool no_codec_plugin,
-            uint32_t audio_latency_ms)
+            uint32_t audio_latency_ms,
+            const std::filesystem::path& crash_dir,
+            bool no_input_record,
+            const std::string& debug_crash_kind)
 {
     std::vector<InputScriptEntry> input_script;
     if (!input_script_path.empty())
@@ -563,6 +773,56 @@ int RunBoot(const std::filesystem::path& game_dir,
             return repsp::hle::utility::DialogAnswer::kConfirm;
         });
 
+    const std::filesystem::path crash_base_dir = crash_dir.empty()
+        ? (repsp::platform::GetUserDataDirectory("redmp1") / "crashes")
+        : crash_dir;
+    const std::filesystem::path crash_run_dir = MakeUniqueCrashRunDir(crash_base_dir);
+
+    CrashExtraContext crash_extra;
+    crash_extra.app_version = REDMP1_VERSION;
+    crash_extra.disc_id = idResult.disc_id;
+    crash_extra.disc_version = idResult.disc_version;
+    crash_extra.executable_name = idResult.executable_name;
+    crash_extra.executable_sha1 = idResult.executable_sha1;
+    crash_extra.renderer = (repsp::gpu::GetRenderBackend() && repsp::gpu::GetRenderBackend()->name)
+        ? repsp::gpu::GetRenderBackend()->name
+        : (use_gl ? "opengl" : "software");
+    crash_extra.scale = scale;
+    crash_extra.headless = headless;
+    crash_extra.audio_latency_ms = audio_latency_ms;
+    crash_extra.max_vblanks = max_vblanks;
+    if (no_codec_plugin)
+    {
+        crash_extra.codec_plugin_status = "disabled (--no-codec-plugin)";
+    }
+    else if (codec_plugin != nullptr && codec_plugin->IsLoaded())
+    {
+        crash_extra.codec_plugin_status = std::string("loaded: ") + codec_plugin->Name();
+    }
+    else
+    {
+        crash_extra.codec_plugin_status = "fallback (silent/blank)";
+    }
+    crash_extra.input_script_used = !input_script_path.empty();
+    crash_extra.input_recording = !no_input_record;
+    crash_extra.custom_save_dir = !save_dir.empty();
+
+    repsp::platform::SetLogFile((crash_run_dir / "run.log").string());
+    repsp::platform::CrashConfig crash_cfg{};
+    crash_cfg.crash_dir = crash_run_dir.string();
+    crash_cfg.write_minidump = true;
+    crash_cfg.extra_callback = &FormatAppCrashExtra;
+    crash_cfg.extra_user_data = &crash_extra;
+    repsp::platform::InstallCrashHandler(crash_cfg);
+    repsp::runtime::RegisterRuntimeCrashProvider();
+    repsp::platform::SetCrashGuestMemoryRange(
+        reinterpret_cast<uintptr_t>(memory.Base()),
+        repsp::runtime::GuestMemory::kWindowSize);
+    if (!no_input_record)
+    {
+        repsp::hle::ctrl::StartInputRecording((crash_run_dir / "input_recording.txt").string());
+    }
+
     repsp::runtime::Scheduler& sched = repsp::runtime::GetScheduler();
     int32_t entry_tid = sched.CreateThread(
         cfg.first_thread_name,
@@ -633,6 +893,21 @@ int RunBoot(const std::filesystem::path& game_dir,
 
     repsp::runtime::GetNidRegistry().SetStopOnUnimplemented(true);
 
+    if (!debug_crash_kind.empty())
+    {
+        std::cerr << "[redmp1] Triggering --debug-crash=" << debug_crash_kind << "\n";
+        if (!TriggerDebugCrash(debug_crash_kind, sched))
+        {
+            std::cerr << "[redmp1] Unknown --debug-crash kind: " << debug_crash_kind << "\n";
+            repsp::hle::ctrl::StopInputRecording();
+            repsp::platform::CloseLogFile();
+            repsp::platform::SetCrashReportExtra(nullptr, nullptr);
+            repsp::platform::UninstallCrashHandler();
+            PruneCrashBaseDirectory(crash_base_dir, crash_run_dir);
+            return 1;
+        }
+    }
+
     std::cout << "[boot] Starting guest execution at 0x" << std::hex << loaded->entry
               << " ($gp=0x" << loaded->gp << ", tid=" << std::dec << entry_tid << ")...\n";
 
@@ -666,6 +941,7 @@ int RunBoot(const std::filesystem::path& game_dir,
     const std::string wake_stats = repsp::runtime::GetScheduler().FormatWakeLatencyStats();
     repsp::hle::utility::SetDialogPolicy(nullptr);
     repsp::hle::ctrl::SetInputSource(nullptr);
+    repsp::hle::ctrl::StopInputRecording();
     repsp::hle::utility::Shutdown();
     repsp::hle::mpeg::Shutdown();
     repsp::hle::atrac::Shutdown();
@@ -674,6 +950,10 @@ int RunBoot(const std::filesystem::path& game_dir,
     repsp::hle::ctrl::Shutdown();
     repsp::hle::dmac::Shutdown();
     repsp::hle::display::Shutdown();
+    repsp::platform::CloseLogFile();
+    repsp::platform::SetCrashReportExtra(nullptr, nullptr);
+    repsp::platform::UninstallCrashHandler();
+    PruneCrashBaseDirectory(crash_base_dir, crash_run_dir);
     repsp::platform::Shutdown();
     codec_plugin.reset();
 
@@ -822,7 +1102,10 @@ int main(int argc, char* argv[])
     std::filesystem::path input_script_path;
     std::filesystem::path save_dir;
     std::filesystem::path codec_plugin_path;
+    std::filesystem::path crash_dir;
+    std::string debug_crash_kind;
     bool no_codec_plugin = false;
+    bool no_input_record = false;
     bool dialog_answer_yes = true;
     bool lift_check = false;
     bool headless = false;
@@ -892,6 +1175,28 @@ int main(int argc, char* argv[])
         else if (opt == "--no-codec-plugin")
         {
             no_codec_plugin = true;
+        }
+        else if (opt == "--crash-dir")
+        {
+            if (i + 1 >= argc)
+            {
+                std::cerr << "Error: --crash-dir requires a directory path.\n";
+                return 1;
+            }
+            crash_dir = argv[++i];
+        }
+        else if (opt == "--no-input-record")
+        {
+            no_input_record = true;
+        }
+        else if (opt == "--debug-crash")
+        {
+            if (i + 1 >= argc)
+            {
+                std::cerr << "Error: --debug-crash requires a kind.\n";
+                return 1;
+            }
+            debug_crash_kind = argv[++i];
         }
         else if (opt == "--lift-check")
         {
@@ -1023,7 +1328,8 @@ int main(int argc, char* argv[])
     return RunBoot(game_dir, result, headless, use_gl, scale, max_vblanks, input_script_path, save_dir,
                    dialog_answer_yes ? repsp::hle::utility::DialogAnswer::kYes
                                      : repsp::hle::utility::DialogAnswer::kNo,
-                   codec_plugin_path, no_codec_plugin, audio_latency_ms);
+                   codec_plugin_path, no_codec_plugin, audio_latency_ms,
+                   crash_dir, no_input_record, debug_crash_kind);
 #else
     (void)headless;
     (void)use_gl;
@@ -1035,6 +1341,9 @@ int main(int argc, char* argv[])
     (void)codec_plugin_path;
     (void)no_codec_plugin;
     (void)audio_latency_ms;
+    (void)crash_dir;
+    (void)no_input_record;
+    (void)debug_crash_kind;
     return 0;
 #endif
 }

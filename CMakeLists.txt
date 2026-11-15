@@ -78,6 +78,7 @@ add_library(redmp1_recomp_abi STATIC
     src/recomp_abi/dispatch.c
     src/recomp_abi/trap.c
     src/recomp_abi/trace.c
+    src/recomp_abi/exec_trace.cpp
     src/recomp_abi/vfpu.c
 )
 target_include_directories(redmp1_recomp_abi PUBLIC
@@ -90,7 +91,7 @@ target_link_libraries(redmp1_recomp_abi PUBLIC
     repsp::runtime
 )
 if(MSVC)
-    target_compile_options(redmp1_recomp_abi PRIVATE /W3 /MP /utf-8)
+    target_compile_options(redmp1_recomp_abi PRIVATE /W3 /MP /utf-8 $<$<CONFIG:Release>:/Z7>)
     target_compile_definitions(redmp1_recomp_abi PRIVATE _CRT_SECURE_NO_WARNINGS)
 else()
     target_compile_options(redmp1_recomp_abi PRIVATE -Wall -Wextra -Wno-unused-parameter)
@@ -110,6 +111,9 @@ target_link_libraries(redmp1_game PUBLIC
     repsp::runtime
 )
 repsp_apply_host_flags(redmp1_game)
+if(MSVC)
+    target_compile_options(redmp1_game PRIVATE $<$<CONFIG:Release>:/Z7>)
+endif()
 
 # 5. Generated recompiled game code library (conditional on generated/ presence)
 set(REDMP1_GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/game/dmp1/recomp/generated"
@@ -157,6 +161,10 @@ target_link_libraries(redmp1 PRIVATE
     repsp::platform
 )
 repsp_apply_host_flags(redmp1)
+if(MSVC)
+    target_compile_options(redmp1 PRIVATE $<$<CONFIG:Release>:/Z7>)
+    target_link_options(redmp1 PRIVATE $<$<CONFIG:Release>:/DEBUG:FULL /OPT:REF /OPT:ICF>)
+endif()
 if(REDMP1_CODEC_FFMPEG)
     add_dependencies(redmp1 repsp_codec_ffmpeg)
     add_custom_command(TARGET redmp1 POST_BUILD
