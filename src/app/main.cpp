@@ -63,8 +63,9 @@ void PrintUsage(const char* prog)
               << "Options:\n"
               << "  --variants <path>      Path to variants.json (default: search adjacent/source)\n"
               << "  --headless             Run without opening a display window\n"
-              << "  --renderer <sw|gl>     Select render backend (default: sw)\n"
+              << "  --renderer <sw|gl>     Select render backend (default: gl windowed, sw headless)\n"
               << "  --scale <n>            Window scale 1..8, and GL internal scale (default: 2)\n"
+              << "  --audio-latency-ms <n> Target host audio buffer depth in ms (default: 20)\n"
               << "  --max-vblanks <n>      Stop execution after <n> VBlanks (0 = unlimited)\n"
               << "  --input-script <path>  Deterministic controller script (<vblank> <button names>)\n"
               << "  --save-dir <path>      Directory for sceUtility savedata slots (default: user data/savedata)\n"
@@ -369,7 +370,8 @@ int RunBoot(const std::filesystem::path& game_dir,
             const std::filesystem::path& save_dir,
             repsp::hle::utility::DialogAnswer yes_no_answer,
             const std::filesystem::path& codec_plugin_path,
-            bool no_codec_plugin)
+            bool no_codec_plugin,
+            uint32_t audio_latency_ms)
 {
     std::vector<InputScriptEntry> input_script;
     if (!input_script_path.empty())
@@ -496,7 +498,10 @@ int RunBoot(const std::filesystem::path& game_dir,
         });
     }
     repsp::hle::dmac::Register();
-    repsp::hle::audio::Register();
+    repsp::hle::audio::AudioHleConfig audio_cfg;
+    audio_cfg.auto_attach_platform = true;
+    audio_cfg.target_latency_ms = audio_latency_ms;
+    repsp::hle::audio::Register(audio_cfg);
     repsp::hle::sascore::Register();
     repsp::hle::atrac::Register();
     repsp::hle::mpeg::Register();
@@ -658,6 +663,7 @@ int RunBoot(const std::filesystem::path& game_dir,
     const std::string atrac_stats = repsp::hle::atrac::FormatStats();
     const std::string mpeg_stats = repsp::hle::mpeg::FormatStats();
     const std::string utility_stats = repsp::hle::utility::FormatStats();
+    const std::string wake_stats = repsp::runtime::GetScheduler().FormatWakeLatencyStats();
     repsp::hle::utility::SetDialogPolicy(nullptr);
     repsp::hle::ctrl::SetInputSource(nullptr);
     repsp::hle::utility::Shutdown();
@@ -752,6 +758,7 @@ int RunBoot(const std::filesystem::path& game_dir,
               << "  " << atrac_stats << "\n"
               << "  " << mpeg_stats << "\n"
               << "  " << utility_stats << "\n"
+              << "  Scheduler:   " << wake_stats << "\n"
               << "==============================\n";
 
     repsp::hle::kernel::PrintKernelSummary();
@@ -816,8 +823,10 @@ int main(int argc, char* argv[])
     bool lift_check = false;
     bool headless = false;
     bool use_gl = false;
+    bool renderer_explicit = false;
     int scale = 2;
     uint32_t max_vblanks = 0;
+    uint32_t audio_latency_ms = 20;
 
     for (int i = 2; i < argc; ++i)
     {
@@ -896,6 +905,7 @@ int main(int argc, char* argv[])
                 return 1;
             }
             std::string r = argv[++i];
+            renderer_explicit = true;
             if (r == "sw" || r == "software")
             {
                 use_gl = false;
@@ -944,6 +954,28 @@ int main(int argc, char* argv[])
             }
             max_vblanks = static_cast<uint32_t>(parsed);
         }
+        else if (opt == "--audio-latency-ms")
+        {
+            if (i + 1 >= argc)
+            {
+                std::cerr << "Error: --audio-latency-ms requires a numeric argument.\n";
+                return 1;
+            }
+            const char* raw = argv[++i];
+            char* end_ptr = nullptr;
+            unsigned long parsed = std::strtoul(raw, &end_ptr, 10);
+            if (raw[0] == '\0' || raw[0] == '-' || end_ptr == nullptr || *end_ptr != '\0' || parsed > 500ul)
+            {
+                std::cerr << "Error: Invalid --audio-latency-ms value: " << raw << " (expected 0..500)\n";
+                return 1;
+            }
+            audio_latency_ms = static_cast<uint32_t>(parsed);
+        }
+    }
+
+    if (!renderer_explicit)
+    {
+        use_gl = !headless;
     }
 
     if (variants_path.empty())
@@ -987,7 +1019,7 @@ int main(int argc, char* argv[])
     return RunBoot(game_dir, result, headless, use_gl, scale, max_vblanks, input_script_path, save_dir,
                    dialog_answer_yes ? repsp::hle::utility::DialogAnswer::kYes
                                      : repsp::hle::utility::DialogAnswer::kNo,
-                   codec_plugin_path, no_codec_plugin);
+                   codec_plugin_path, no_codec_plugin, audio_latency_ms);
 #else
     (void)headless;
     (void)use_gl;
@@ -998,6 +1030,7 @@ int main(int argc, char* argv[])
     (void)dialog_answer_yes;
     (void)codec_plugin_path;
     (void)no_codec_plugin;
+    (void)audio_latency_ms;
     return 0;
 #endif
 }
