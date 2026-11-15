@@ -17,6 +17,9 @@ void recomp_abi_reset(void);
 uint64_t recomp_abi_dispatch_misses(void);
 uint32_t recomp_abi_last_miss(void);
 
+// Print guest SP balance and host stack high-water summary (no-op unless REDMP1_TRACE_GUEST).
+void recomp_abi_trace_summary(void);
+
 #ifdef __cplusplus
 }
 #endif

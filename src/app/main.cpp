@@ -762,6 +762,9 @@ int RunBoot(const std::filesystem::path& game_dir,
               << "==============================\n";
 
     repsp::hle::kernel::PrintKernelSummary();
+#ifdef REDMP1_TRACE_GUEST
+    recomp_abi_trace_summary();
+#endif
     return exit_code;
 }
 #endif
