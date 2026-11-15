@@ -764,6 +764,7 @@ int RunBoot(const std::filesystem::path& game_dir,
     repsp::hle::kernel::PrintKernelSummary();
 #ifdef REDMP1_TRACE_GUEST
     recomp_abi_trace_summary();
+    std::cout << repsp::runtime::GetScheduler().FormatHostStackStats();
 #endif
     return exit_code;
 }
