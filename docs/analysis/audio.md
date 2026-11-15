@@ -76,6 +76,23 @@ flowchart TD
 ## 7. 미확정 사항 (**미확정**)
 
 * 실제 BGM(`AT3`/`AT3+`) 트랙별 루프 구간, 음량 밸런스 및 개별 키음 파형 품질은 장시간 청취 검증이 추가로 필요하다.
+* ATRAC 스트림 `smpl` 청크에서 `loopEnd=1039283664`가 관측되었으며, 루프 지점 파싱 및 일부 소리의 재생 속도 문제는 별도 작업에서 검증한다.
+
+## 8. 타이틀~플레이 구간 소리 목록 (`--max-vblanks 2100`, **확인됨**)
+
+| 구간 | 경로 | 식별 / 주소 | 원본 형식 및 플래그 | 출력 채널 |
+| --- | --- | --- | --- | --- |
+| 오프닝 무비 | `sceMpeg` (`PSMF`) | `avcAu=142`, `atracAu=110` | ATRAC3+ (MPEG 오디오 스트림) | `ch1` (`2048`→`1024`) |
+| 로고/진입 효과음 | `sceSasCore` (`v=1`) | `0x0920D450` (`0xA750` B) | VAG, `pitch=0x1000`, `loop=1`, `00=2675, 01=1, 07=1` | `ch2` (`256`) |
+| 타이틀 BGM | `sceAtrac3plus` (`id=0`) | `stream`, `dataSize=936192` | `tag=0x0270`, 2ch 44.1 kHz, `blockAlign=384`, `spf=1024`, `loopNum=-1` | `ch1` (`1024`) |
+| 타이틀 루프 사운드 | `sceSasCore` (`v=2, v=3`) | `0x08F3D7F0`/`0x08F69E10` (`0x2C5E0` B) | VAG, `pitch=0x1000`, `loop=1`, `00=1, 06=1, 02=11355, 03=1` | `ch2` (`256`) |
+| 모드 선택 효과음 | `sceSasCore` (`v=4`) | `0x08F36C00` (`0x6BB0` B) | VAG, `pitch=0x1000`, `loop=1`, `00=1721, 01=1, 07=1` | `ch2` (`256`) |
+| 곡 선택 BGM | `sceAtrac3plus` (`id=0`) | `stream`, `dataSize=441600` | `tag=0x0270`, 2ch 44.1 kHz, `blockAlign=384`, `spf=1024`, `loopNum=-1` | `ch1` (`1024`) |
+| 곡 선택 효과음 | `sceSasCore` (`v=5`) | `0x08F2C190` (`0x5DE0` B) | VAG, `pitch=0x1000`, `loop=1`, `00=1500, 01=1, 07=1` | `ch2` (`256`) |
+| 플레이 BGM | `sceAtrac3plus` (`id=0`) | `stream`, `dataSize=1782528` | `tag=0x0270`, 2ch 44.1 kHz, `blockAlign=384`, `spf=1024`, `loopNum=0` | `ch1` (`1024`) |
+| 플레이 효과음·키음 | `sceSasCore` (`v=6, v=7`) | `0x08D81E50`/`0x08D88FE0` (`0x7150` B) | VAG, `pitch=0x1000`, `loop=1`, `00=1811, 01=1, 07=1` | `ch2` (`256`) |
+
+* 게스트 헬퍼 `0x0885215C`는 모든 효과음 호출에서 `__sceSasSetVoice(..., loop=1)`을 전달하며, 단발 효과음은 VAG 블록 플래그 `0x01`(LoopEnd 단독, `0x02` 미설정) + `0x07`(End+Mute)로 끝을 표시하고 루프 음원(`v=2, v=3`)만 `0x06`/`0x02`/`0x03`을 사용한다.
 
 ---
 
@@ -147,4 +164,21 @@ flowchart TD
 
 ## 6. Unresolved Items (**Unresolved**)
 
-* Per-track `AT3`/`AT3+` loop points, mix balance, and audible keysound playback quality remain to be verified once a real ATRAC3plus decoder is integrated.
+* Per-track `AT3`/`AT3+` loop points, mix balance, and audible keysound playback quality remain to be verified by ear.
+* ATRAC `smpl` parsing yielded `loopEnd=1039283664` on the observed BGM streams; loop-point parsing and slow-playback reports are deferred to a follow-up task.
+
+## 7. Sound Inventory from Title to Gameplay (`--max-vblanks 2100`, **Confirmed**)
+
+| Stretch | Path | ID / Address | Source Format & Flags | Output Channel |
+| --- | --- | --- | --- | --- |
+| Opening movie | `sceMpeg` (`PSMF`) | `avcAu=142`, `atracAu=110` | ATRAC3+ (MPEG audio stream) | `ch1` (`2048`→`1024`) |
+| Intro SFX | `sceSasCore` (`v=1`) | `0x0920D450` (`0xA750` B) | VAG, `pitch=0x1000`, `loop=1`, `00=2675, 01=1, 07=1` | `ch2` (`256`) |
+| Title BGM | `sceAtrac3plus` (`id=0`) | `stream`, `dataSize=936192` | `tag=0x0270`, 2ch 44.1 kHz, `blockAlign=384`, `spf=1024`, `loopNum=-1` | `ch1` (`1024`) |
+| Title loop sound | `sceSasCore` (`v=2, v=3`) | `0x08F3D7F0`/`0x08F69E10` (`0x2C5E0` B) | VAG, `pitch=0x1000`, `loop=1`, `00=1, 06=1, 02=11355, 03=1` | `ch2` (`256`) |
+| Mode select SFX | `sceSasCore` (`v=4`) | `0x08F36C00` (`0x6BB0` B) | VAG, `pitch=0x1000`, `loop=1`, `00=1721, 01=1, 07=1` | `ch2` (`256`) |
+| Song select BGM | `sceAtrac3plus` (`id=0`) | `stream`, `dataSize=441600` | `tag=0x0270`, 2ch 44.1 kHz, `blockAlign=384`, `spf=1024`, `loopNum=-1` | `ch1` (`1024`) |
+| Song select SFX | `sceSasCore` (`v=5`) | `0x08F2C190` (`0x5DE0` B) | VAG, `pitch=0x1000`, `loop=1`, `00=1500, 01=1, 07=1` | `ch2` (`256`) |
+| Gameplay BGM | `sceAtrac3plus` (`id=0`) | `stream`, `dataSize=1782528` | `tag=0x0270`, 2ch 44.1 kHz, `blockAlign=384`, `spf=1024`, `loopNum=0` | `ch1` (`1024`) |
+| Gameplay SFX/keysounds | `sceSasCore` (`v=6, v=7`) | `0x08D81E50`/`0x08D88FE0` (`0x7150` B) | VAG, `pitch=0x1000`, `loop=1`, `00=1811, 01=1, 07=1` | `ch2` (`256`) |
+
+* Guest helper `0x0885215C` passes `loop=1` to `__sceSasSetVoice` for all triggers; one-shot SFX carry `0x01` (`LoopEnd` without `0x02`) + `0x07` (`End+Mute`), while looping voices (`v=2, v=3`) carry `0x06`/`0x02`/`0x03`.
