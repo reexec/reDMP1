@@ -35,6 +35,15 @@ This directory maintains local patches applied to `third_party/psprecomp` (targe
      - `emit.c`에서 `last_terminal` 판정 시 `in.is_indirect`를 `in.is_call` 여부와 무관하게 terminal로 간주하던 문제를 수정하여, `jalr`(`is_indirect && is_call`)로 끝난 뒤 다음 함수나 레이블로 이어지는 경우 fall-through 호출이 누락되지 않도록 합니다.
      - Fixes `last_terminal` in `emit.c` so `jalr` (`in.is_indirect && in.is_call`) is not treated as terminal like `jr`, preserving fall-through calls into the following function or label when a body ends at `jalr`.
 
+4. **`0004-j-owned-target-goto.patch`**
+   - **설명 / Description**:
+     - 원본 명령열 예: `0x088616C8: j 0x0886167C` (함수 시작 주소로 되돌아가는 루프).
+     - 잘못 옮겨진 방식: `emit.c`의 `mark_labels`와 `j` 출력이 `owned_by(an, in.target, owner) && !is_function(an, in.target)` 조건을 써서, 대상이 현재 본문이 소유한 함수 진입점이면 `goto L_<addr>` 대신 `psp_func_<addr>(); return;` 꼬리 호출을 생성해 MSVC 등에서 매 반복마다 호스트 스택이 쌓였습니다.
+     - 고친 방식: `mark_labels`와 `j` 출력에서 `!is_function(an, in.target)` 제한을 제거하여 현재 본문이 소유한 주소로의 `j`는 항상 `goto L_<addr>`(본문 앞 `PSP_ENTER`/`PSP_SP_ENTER`/진입 `switch`를 건너뛴 본문 내부 레이블)로 옮기고, 역방향(`in.target <= a`)이면 `PSP_LOOP`를 함께 출력합니다.
+     - Original instruction sequence example: `0x088616C8: j 0x0886167C` (a loop jumping back to the function's own start).
+     - How it was mislifted: `mark_labels` and `j` emission in `emit.c` checked `owned_by(an, in.target, owner) && !is_function(an, in.target)`, so jumping to a function entry owned by the current body emitted `psp_func_<addr>(); return;` instead of `goto L_<addr>`, growing the host stack on every iteration under MSVC.
+     - How it is fixed: remove `!is_function(an, in.target)` in both `mark_labels` and `j` emission so any `j` targeting an address owned by the current body emits `goto L_<addr>` (landing after `PSP_ENTER`/`PSP_SP_ENTER`/entry `switch`), and emits `PSP_LOOP` when `in.target <= a`.
+
 ---
 
 ## 업스트림 PR 초안 / Draft Upstream Pull Request
