@@ -118,26 +118,7 @@ file(GLOB REDMP1_RECOMP_SRCS
 )
 
 if(REDMP1_RECOMP_SRCS)
-    add_library(redmp1_recomp STATIC
-        ${REDMP1_RECOMP_SRCS}
-    )
-    target_include_directories(redmp1_recomp PUBLIC
-        $<BUILD_INTERFACE:${REDMP1_GENERATED_DIR}>
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/psprecomp/include>
-    )
-    target_link_libraries(redmp1_recomp PUBLIC
-        redmp1_recomp_abi
-    )
-    if(REDMP1_TRACE_GUEST)
-        target_compile_definitions(redmp1_recomp PRIVATE PSPRECOMP_TRACE)
-    endif()
-    if(MSVC)
-        target_compile_options(redmp1_recomp PRIVATE /W0 /MP /utf-8 /bigobj)
-        target_compile_definitions(redmp1_recomp PRIVATE _CRT_SECURE_NO_WARNINGS)
-    else()
-        target_compile_options(redmp1_recomp PRIVATE -w)
-    endif()
-
+    add_subdirectory(src/game/dmp1/recomp)
     set(REDMP1_HAVE_RECOMP ON)
 else()
     set(REDMP1_HAVE_RECOMP OFF)
@@ -150,6 +131,10 @@ add_executable(redmp1
 target_compile_definitions(redmp1 PRIVATE REDMP1_VERSION="${REDMP1_VERSION_STRING}")
 if(REDMP1_HAVE_RECOMP)
     target_compile_definitions(redmp1 PRIVATE REDMP1_HAVE_RECOMP=1)
+    if(REDMP1_TRACE_GUEST)
+        target_compile_definitions(redmp1_recomp_abi PRIVATE REDMP1_TRACE_GUEST=1)
+        target_compile_definitions(redmp1 PRIVATE REDMP1_TRACE_GUEST=1)
+    endif()
     target_link_libraries(redmp1 PRIVATE redmp1_recomp redmp1_recomp_abi)
 else()
     target_compile_definitions(redmp1 PRIVATE REDMP1_HAVE_RECOMP=0)
@@ -186,11 +171,7 @@ if(REDMP1_CODEC_FFMPEG)
         )
     endforeach()
 endif()
-if(MSVC)
-    # Lifted tail-recursive loops in redmp1_recomp are not tail-call optimized under /Od,
-    # so reserve 64 MB of host stack for Debug movie playback loops.
-    target_link_options(redmp1 PRIVATE /STACK:67108864)
-endif()
+
 
 # Relocation verification tool (cross-check repsp vs allegrexrecomp)
 add_executable(reloc_check
