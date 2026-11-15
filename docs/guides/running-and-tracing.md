@@ -68,9 +68,17 @@ $env:REPSP_HLE_TRACE = "1"
 * `Open Files`: 현재 열려 있는 VFS 파일 목록
 * `User Partition Blocks`: 사용자 메모리 파티션 블록 현황
 
-## 3. 게스트 참조 카운트·단언 진단 (`REDMP1_TRACE_GUEST`)
+## 3. 게스트 참조 카운트·단언·스택 균형·호스트 스택 진단 (`REDMP1_TRACE_GUEST`)
 
-CMake 구성 시 `-DREDMP1_TRACE_GUEST=ON`을 켜면(`OFF`가 기본값이며 비활성 시 오버헤드 0) `src/recomp_abi/trace.c`의 게스트 진단 훅이 활성화된다. 실행 시 `REDMP1_TRACE_REFCOUNT=1`을 설정하면 `CInstance`/`Holder`/`List` 계열 호출과 게스트 `__assert` 인자(`file`, `line`, `expr`)를 표준 오류로 기록한다.
+CMake 구성 시 `-DREDMP1_TRACE_GUEST=ON`을 켜면(`OFF`가 기본값이며 비활성 시 오버헤드 0) `src/recomp_abi/trace.c`의 게스트 진단 훅이 활성화됩니다.
+
+* **`REDMP1_TRACE_REFCOUNT=1`**: `CInstance`/`Holder`/`List` 계열 호출과 게스트 `__assert` 인자(`file`, `line`, `expr`)를 표준 오류로 기록합니다.
+* **스택 균형 훅 (`psp_trace_sp*`)**: `PSP_SP_CHECK`(`jr $ra`), `PSP_SP_LEAVE`(블록 경계 넘김), `PSP_SP_CALL`(`jal`/`jalr` 호출 전후)에서 불균형이 생기면 지점·델타별로 최초 1회 표준 오류에 출력하고 횟수를 집계합니다.
+* **호스트 스택 최고 사용량**: 게스트 스레드별 호스트 스택 사용량 최고치와 가장 깊었던 4단계 호출 사슬을 기록해 정지 보고서 끝의 `=== Guest SP Balance & Host Stack Summary ===`에 출력합니다.
+* **정적 점검 도구 (`tools/lift_audit.py`)**: 생성 코드(`--generated`)와 재배치 이미지(`allegrexrecomp relocate ... --image`)를 대조해 본문 끝 명령과 C 코드 끝 모양의 일치 여부를 전수 점검합니다.
+  ```powershell
+  python tools\lift_audit.py --generated src\game\dmp1\recomp\generated --image <reloc.bin> --base 0x08804000
+  ```
 
 ## 4. 오디오·SAS·ATRAC 진단
 
@@ -123,9 +131,17 @@ Each non-comment (`#`) line has `<vblank> <button tokens...>` (`START`, `SELECT`
 
 Set `REPSP_HLE_TRACE=1` (and optionally `REPSP_HLE_TRACE_LIMIT=<N>`) to log each HLE call with its first four arguments and return value, followed by the kernel call-count, thread, open-file, and user-partition summaries.
 
-## 3. Guest Refcount and Assertion Diagnostics (`REDMP1_TRACE_GUEST`)
+## 3. Guest Refcount, SP Balance, and Host Stack Diagnostics (`REDMP1_TRACE_GUEST`)
 
-Configure CMake with `-DREDMP1_TRACE_GUEST=ON` (default `OFF`, zero runtime cost when disabled) to enable the diagnostic hook in `src/recomp_abi/trace.c`. At runtime, setting `REDMP1_TRACE_REFCOUNT=1` logs `CInstance`/`Holder`/`List` reference-count transitions and guest `__assert(file, line, expr)` failures to `stderr`.
+Configure CMake with `-DREDMP1_TRACE_GUEST=ON` (default `OFF`, zero runtime cost when disabled) to enable the diagnostic hooks in `src/recomp_abi/trace.c`:
+
+* **`REDMP1_TRACE_REFCOUNT=1`**: Logs `CInstance`/`Holder`/`List` reference-count transitions and guest `__assert(file, line, expr)` failures to `stderr`.
+* **Stack balance hooks (`psp_trace_sp*`)**: Logs unique `(site, delta)` imbalances once to `stderr` for `PSP_SP_CHECK` (`jr $ra`), `PSP_SP_LEAVE` (fall-out hand-over), and `PSP_SP_CALL` (across `jal`/`jalr`) and aggregates counts.
+* **Host stack high-water**: Measures each guest thread's host stack high-water mark and deepest 4-function call chain, printed under `=== Guest SP Balance & Host Stack Summary ===` at exit.
+* **Static lift audit (`tools/lift_audit.py`)**: Checks every generated body (`--generated`) against the relocated binary (`--image` from `allegrexrecomp relocate`) to verify end-of-body instruction/C-shape consistency:
+  ```powershell
+  python tools\lift_audit.py --generated src\game\dmp1\recomp\generated --image <reloc.bin> --base 0x08804000
+  ```
 
 ## 4. Audio, SAS, and ATRAC Diagnostics
 
