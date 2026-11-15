@@ -94,6 +94,11 @@ flowchart TD
 
 * 게스트 헬퍼 `0x0885215C`는 모든 효과음 호출에서 `__sceSasSetVoice(..., loop=1)`을 전달하며, 단발 효과음은 VAG 블록 플래그 `0x01`(LoopEnd 단독, `0x02` 미설정) + `0x07`(End+Mute)로 끝을 표시하고 루프 음원(`v=2, v=3`)만 `0x06`/`0x02`/`0x03`을 사용한다.
 
+## 9. 그리기 스레드 GE 리스트 규모와 소리 스레드 우선순위 관계 (**확인됨**)
+
+* `user_main`(`uid=0x6`, `prio=32`)이 제출하는 GE 디스플레이 리스트는 `--max-vblanks 2100` 구간 동안 OpenGL 기준 `1,347`개 리스트 / `1,142,969`개 명령(리스트당 평균 약 `849` 명령), 소프트웨어 렌더러 기준 `937`개 리스트 / `805,196`개 명령(리스트당 평균 약 `859` 명령) 규모다.
+* `sound_poll_thread`(`uid=0x11`, `prio=18`, `ch2` 256프레임)와 `stream_sound_poll_thread`(`uid=0x13`, `prio=18`, `ch1` 1024프레임)는 `user_main`보다 높은 우선순위(`18 < 32`)이지만, `sceGeListEnQueue`/`sceGeListSync`가 호스트 CPU에서 동기 실행되는 동안 스케줄러 선점 지점이 없으면 한 리스트가 끝날 때까지(SW 기준 최대 ~44 ms) 소리 스레드가 깨어나지 못해 끊김의 주원인이 된다.
+
 ---
 
 # Audio, SAS, and ATRAC3plus Subsystem Analysis (`ULKS-46050`, `BOOT.BIN`)
@@ -182,3 +187,8 @@ flowchart TD
 | Gameplay SFX/keysounds | `sceSasCore` (`v=6, v=7`) | `0x08D81E50`/`0x08D88FE0` (`0x7150` B) | VAG, `pitch=0x1000`, `loop=1`, `00=1811, 01=1, 07=1` | `ch2` (`256`) |
 
 * Guest helper `0x0885215C` passes `loop=1` to `__sceSasSetVoice` for all triggers; one-shot SFX carry `0x01` (`LoopEnd` without `0x02`) + `0x07` (`End+Mute`), while looping voices (`v=2, v=3`) carry `0x06`/`0x02`/`0x03`.
+
+## 8. Drawing Thread GE List Size vs. Audio Thread Priority (**Confirmed**)
+
+* Over `--max-vblanks 2100`, `user_main` (`uid=0x6`, `prio=32`) submits `1,347` GE display lists / `1,142,969` commands (~`849` commands/list on average) under OpenGL and `937` lists / `805,196` commands (~`859` commands/list) under the software renderer.
+* `sound_poll_thread` (`uid=0x11`, `prio=18`, `ch2` 256 frames) and `stream_sound_poll_thread` (`uid=0x13`, `prio=18`, `ch1` 1024 frames) have strictly higher priority (`18 < 32`) than `user_main`, so when `sceGeListEnQueue`/`sceGeListSync` runs synchronously without preemption points, a single long list (up to ~44 ms on SW) delays audio thread wakeups and causes audible gaps.
