@@ -14,7 +14,11 @@ from pathlib import Path
 BODY_START_RE = re.compile(r"^static void psp_body_([0-9A-Fa-f]{8})\(uint32_t _entry\)\s*\{")
 INSN_CMT_RE = re.compile(r"^\s*/\*\s*([0-9A-Fa-f]{8})\s+([a-zA-Z0-9_.]+)(?:\s+(.*?))?\*/\s*$")
 THUNK_RE = re.compile(r"^void (psp_(?:func|at)_[0-9A-Fa-f]{8})\(void\)")
+THUNK_OWNER_RE = re.compile(
+    r"^void psp_(?:func|at)_([0-9A-Fa-f]{8})\(void\)\s*\{\s*psp_body_([0-9A-Fa-f]{8})\("
+)
 TAIL_CALL_RE = re.compile(r"\b(psp_func_[0-9A-Fa-f]{8}|psp_at_[0-9A-Fa-f]{8}|psp_import_[0-9A-Fa-f]{8}|psp_dispatch)\(")
+STATIC_TAIL_RE = re.compile(r"^\s*(psp_(?:func|at)_([0-9A-Fa-f]{8}))\(\);\s*$")
 
 BRANCH_LIKELY = {
     "beql", "bnel", "blezl", "bgtzl", "bltzl", "bgezl", "bc1fl", "bc1tl",
@@ -120,6 +124,8 @@ def audit_body(
     image: bytes | None,
     base: int,
     known_entries: set[int],
+    entry_owner: dict[int, int],
+    tail_edges: dict[int, set[int]],
     counts: Counter[str],
     mismatches: list[dict],
 ) -> None:
@@ -294,6 +300,84 @@ def audit_body(
                     "tail": window,
                 })
 
+    # Tail-call check across the entire body: collect tail-call edges and flag self-tail-calls.
+    for idx in range(len(lines) - 1):
+        mt = STATIC_TAIL_RE.match(lines[idx])
+        if not mt:
+            continue
+        if lines[idx + 1].strip() != "return;":
+            continue
+        # Ensure it's not a regular call wrapped in PSP_CALL_BEGIN/PSP_CALL_END.
+        if idx > 0 and "PSP_CALL_BEGIN" in lines[idx - 1]:
+            continue
+        target_entry = int(mt.group(2), 16)
+        target_owner = entry_owner.get(target_entry, target_entry)
+        tail_edges.setdefault(body_addr, set()).add(target_owner)
+        if target_owner == body_addr:
+            # Find nearest preceding instruction comment for context.
+            insn_addr = body_addr
+            insn_text = mt.group(1)
+            for back in range(idx - 1, -1, -1):
+                mc = INSN_CMT_RE.match(lines[back])
+                if mc:
+                    insn_addr = int(mc.group(1), 16)
+                    insn_text = f"{mc.group(2)} {(mc.group(3) or '').strip()}".strip()
+                    break
+            mismatches.append({
+                "body": body_addr,
+                "kind": "self_tail_call",
+                "insn_addr": insn_addr,
+                "insn": insn_text,
+                "reason": f"body 0x{body_addr:08X} tail-calls owned entry 0x{target_entry:08X}",
+                "tail": lines[max(0, idx - 3):min(len(lines), idx + 2)],
+            })
+
+
+def find_tail_call_sccs(edges: dict[int, set[int]]) -> list[list[int]]:
+    """Tarjan's strongly connected components on the tail-call graph."""
+    index_counter = 0
+    indices: dict[int, int] = {}
+    lowlink: dict[int, int] = {}
+    stack: list[int] = []
+    on_stack: set[int] = set()
+    sccs: list[list[int]] = []
+
+    sys.setrecursionlimit(max(sys.getrecursionlimit(), len(edges) + 1000))
+
+    def strongconnect(v: int) -> None:
+        nonlocal index_counter
+        indices[v] = index_counter
+        lowlink[v] = index_counter
+        index_counter += 1
+        stack.append(v)
+        on_stack.add(v)
+
+        for w in sorted(edges.get(v, ())):
+            if w not in indices:
+                strongconnect(w)
+                if lowlink[w] < lowlink[v]:
+                    lowlink[v] = lowlink[w]
+            elif w in on_stack:
+                if indices[w] < lowlink[v]:
+                    lowlink[v] = indices[w]
+
+        if lowlink[v] == indices[v]:
+            comp: list[int] = []
+            while True:
+                w = stack.pop()
+                on_stack.remove(w)
+                comp.append(w)
+                if w == v:
+                    break
+            if len(comp) > 1 or (len(comp) == 1 and comp[0] in edges.get(comp[0], ())):
+                sccs.append(sorted(comp))
+
+    for node in sorted(edges.keys()):
+        if node not in indices:
+            strongconnect(node)
+
+    return sorted(sccs, key=lambda c: (-len(c), c[0]))
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Audit allegrexrecomp generated C bodies.")
@@ -314,17 +398,22 @@ def main() -> int:
     if args.image:
         image = Path(args.image).read_bytes()
 
-    # Pass 1: collect all known psp_func_ / psp_at_ entries.
+    # Pass 1: collect all known psp_func_ / psp_at_ entries and their owning bodies.
     known_entries: set[int] = set()
+    entry_owner: dict[int, int] = {}
     for cf in c_files:
         for line in cf.read_text(encoding="utf-8", errors="replace").splitlines():
             mt = THUNK_RE.match(line)
             if mt:
                 known_entries.add(int(mt.group(1).rsplit("_", 1)[1], 16))
+            mo = THUNK_OWNER_RE.match(line)
+            if mo:
+                entry_owner[int(mo.group(1), 16)] = int(mo.group(2), 16)
 
     # Pass 2: parse and audit each psp_body_.
     counts: Counter[str] = Counter()
     mismatches: list[dict] = []
+    tail_edges: dict[int, set[int]] = {}
     total_bodies = 0
 
     for cf in c_files:
@@ -341,7 +430,10 @@ def main() -> int:
                 cur_lines.append(line)
                 if line == "}":
                     total_bodies += 1
-                    audit_body(cur_addr, cur_lines, image, base, known_entries, counts, mismatches)
+                    audit_body(
+                        cur_addr, cur_lines, image, base, known_entries,
+                        entry_owner, tail_edges, counts, mismatches,
+                    )
                     cur_addr = None
                     cur_lines = []
 
@@ -363,6 +455,12 @@ def main() -> int:
             print(f"    reason: {mm['reason']}")
             for tl in mm["tail"]:
                 print(f"      | {tl}")
+
+    sccs = find_tail_call_sccs(tail_edges)
+    print(f"\nTail-call-only cycles (SCCs): {len(sccs)}")
+    for idx, comp in enumerate(sccs, 1):
+        nodes_str = ", ".join(f"0x{a:08X}" for a in comp)
+        print(f"  [{idx}] size={len(comp)}: {nodes_str}")
 
     return 0
 
