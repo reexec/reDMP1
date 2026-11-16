@@ -28,9 +28,15 @@ def find_allegrexrecomp() -> Path:
         REPO_ROOT / "build" / "linux-x64-release" / "allegrexrecomp",
     ]
 
-    for c in candidates:
-        if c.is_file():
-            return c
+    # Use the most recently built candidate, not the first one found: an old
+    # build directory left over from before a lifter patch changed would
+    # otherwise win by its position in the list and silently regenerate code
+    # without the patch.
+    found = [c for c in candidates if c.is_file()]
+    if found:
+        newest = max(found, key=lambda c: c.stat().st_mtime)
+        print(f"Using allegrexrecomp: {newest}", file=sys.stderr)
+        return newest
 
     # Search in PATH
     which = sys.platform == "win32" and "where" or "which"

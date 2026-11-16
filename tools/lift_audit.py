@@ -270,9 +270,13 @@ def audit_body(
             next_is_entry = next_addr in known_entries
             # Flag if next_addr is a known entry/label or looks like real non-zero code (not padding nop/zero).
             if next_is_entry or (next_word is not None and next_word != 0):
+                # A body whose last instruction does not decode is data that pointer
+                # seeding took for code (a string, a table): it is never called, so it
+                # is reported apart from real mismatches.
+                is_data_body = ctrl_mnem == ".word"
                 mismatches.append({
                     "body": body_addr,
-                    "kind": "fallout_silent_return",
+                    "kind": "data_body" if is_data_body else "fallout_silent_return",
                     "insn_addr": ctrl_addr,
                     "insn": f"{ctrl_mnem} {ctrl_ops}",
                     "reason": (
@@ -442,6 +446,9 @@ def main() -> int:
     for k, v in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
         print(f"  {k:20s}: {v}")
 
+    data_bodies = [m for m in mismatches if m["kind"] == "data_body"]
+    mismatches = [m for m in mismatches if m["kind"] != "data_body"]
+    print(f"\nData misread as code (bodies ending in an undecodable word, never called): {len(data_bodies)}")
     by_kind = Counter(m["kind"] for m in mismatches)
     print(f"\nMismatches found: {len(mismatches)}")
     for k, v in sorted(by_kind.items(), key=lambda kv: (-kv[1], kv[0])):
