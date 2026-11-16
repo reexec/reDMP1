@@ -90,6 +90,14 @@ psp_fn_t psp_lookup(uint32_t addr) {
 
 static char g_miss_reason[128];
 
+#if defined(_MSC_VER)
+__declspec(thread) psp_fn_t psp_next = NULL;
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+_Thread_local psp_fn_t psp_next = NULL;
+#else
+__thread psp_fn_t psp_next = NULL;
+#endif
+
 static void default_miss(uint32_t addr) {
     g_misses++;
     g_last_miss = addr;
@@ -99,6 +107,18 @@ static void default_miss(uint32_t addr) {
     repsp_raise_stop(g_miss_reason);
 }
 
+void psp_run(psp_fn_t fn) {
+    while (fn) {
+        fn();
+        if (psp_cpu.unwind) {
+            psp_next = NULL;
+            break;
+        }
+        fn = psp_next;
+        psp_next = NULL;
+    }
+}
+
 void psp_dispatch(uint32_t addr) {
     if (g_budget && ++g_calls >= g_budget) {
         g_budget = 0;
@@ -106,16 +126,31 @@ void psp_dispatch(uint32_t addr) {
     }
     psp_fn_t fn = psp_lookup(addr);
     if (fn) {
-        fn();
+        psp_run(fn);
+        return;
+    }
+    default_miss(addr);
+}
+
+void psp_dispatch_tail(uint32_t addr) {
+    if (g_budget && ++g_calls >= g_budget) {
+        g_budget = 0;
+        if (g_over) g_over();
+    }
+    psp_fn_t fn = psp_lookup(addr);
+    if (fn) {
+        psp_next = fn;
         return;
     }
     default_miss(addr);
 }
 
 void psp_call_from_host(uint32_t addr) {
+    psp_next = NULL;
     psp_frame f = { 0, psp_cpu.frame };
     psp_cpu.frame = &f;
     psp_dispatch(addr);
+    psp_next = NULL;
     psp_cpu.frame = f.prev;
     psp_cpu.unwind = 0;
 }
@@ -148,6 +183,7 @@ void recomp_abi_reset(void) {
     g_last_miss = 0;
     g_budget = 0;
     g_calls = 0;
+    psp_next = NULL;
     g_over = NULL;
     psp_cpu_reset();
 }
