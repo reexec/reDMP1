@@ -150,6 +150,11 @@ flowchart TD
      - 그러므로 줄어든 3,288바이트는 가짜 시작점에서만 도달되던 조각이며, 지금의 8,785개가 패치 전 9,159개보다 정확하다.
 * **방출 및 MSVC 빌드 결과**:
   - 8,785개 함수(17,215 interior entries)가 138개 번들 C 파일(`dmp1_funcs_000..137.c`)로 분할 방출되었으며, 189,455개 명령어 중 VFPU 트랩은 0개(0.00%)다.
+* **upstream 제출판 패치로 바꾼 뒤(2026-11-16, v0.0.18)** (**확인됨**):
+  - 재배치 패치를 upstream에 낸 버전([sp00nznet/psprecomp#36](https://github.com/sp00nznet/psprecomp/pull/36))으로 바꿨다. 이 버전은 재배치된 경로에서도 포인터 seed를 upstream의 `psp_collect_pointer_seeds`(`looks_like_code` 거름)로 모은다. 예전 로컬 패치는 `.text` 범위만 받았다.
+  - 결과: seed 4,640개(entry 1, export 1, 재배치 포인터 4,638), 함수 **9,024개**(+239), 도달 761,988바이트(`.text`의 92.5%), 잘못 해석된 명령 48개, C 파일 143개.
+  - 늘어난 239개 가운데 22개는 `.text` 안이고 해석할 수 없는 단어가 없다(포인터로만 닿는 진짜 코드). 217개는 `.text` 뒤의 같은 세그먼트에 있고, 그중 204개는 문자열·표 같은 데이터를 코드로 읽은 것이다. 이 데이터 함수들은 호출되지 않는다(플레이 화면까지의 실행에서 미발견 주소 dispatch 0건). `tools/lift_audit.py`는 이것들을 불일치와 따로 센다(24개; 나머지 2건도 `.text` 밖의 데이터다).
+  - `lift_invariance`는 이제 두 재배치 주소(`0x08804000`과 `0x08A00000`)를 비교한다. 결과가 완전히 같다. 기준 주소 0은 `--base` 없이 upstream의 원래 경로(재배치하지 않음)를 타므로 비교 대상이 아니다.
 
 ---
 
@@ -228,6 +233,7 @@ This document records facts confirmed by analyzing the original UMD executables 
 * **Seed Refinement (5,967 -> 4,211)**: the seed harvesting now honors `ofsbase`/`addrbase`, and one analysis path serves every base, eliminating false seeds from misread data words and non-relocated constants.
 * **Functions & Coverage**: 8,785 functions (split across 138 C translation units), 757,820 bytes reached (92.0% of `.text`), identical at base 0 and `0x08804000` after the shift (`lift_invariance`). 0 VFPU trap instructions emitted (0.00%).
 * **No function lost (review, 2026-11-14)** (**confirmed**): of the 139 starts found only before the fixes and inside no current function, 20 are the import stub area (`0x000C8C8C`, 1,272 bytes; now `psp_import_*` thunks), 107 are read-only data beyond `.text` (which ends at `0x000C8D70`) decoded as code, some 50-100 KB long, and only 12 (212 bytes) lie inside `.text`, none ever referenced by a pointer word or a `jal` anywhere in the relocated image (mid-function fragments or padding). The 3,288 bytes no longer reached were reachable only from false starts; the current 8,785 functions are more accurate than the earlier 9,159.
+* **After switching to the patch as submitted upstream (2026-11-16, v0.0.18)** (**confirmed**): the relocation patch is now the version submitted as [sp00nznet/psprecomp#36](https://github.com/sp00nznet/psprecomp/pull/36), which collects pointer seeds on the relocated path through upstream's `psp_collect_pointer_seeds` (the `looks_like_code` filter), where the former local patch accepted `.text` only. Result: 4,640 seeds (1 entry, 1 export, 4,638 relocation pointers), **9,024 functions** (+239), 761,988 bytes reached (92.5% of `.text`), 48 invalid instructions, 143 C files. Of the 239 added, 22 lie inside `.text` with no undecodable word (real code reached only by pointer); 217 lie in the same segment after `.text`, 204 of them data (strings, tables) read as code. Those are never called (no undiscovered-address dispatch on the run to gameplay); `tools/lift_audit.py` counts them apart from mismatches (24; the remaining 2 are also data after `.text`). `lift_invariance` now compares two relocated bases (`0x08804000` and `0x08A00000`) and finds them identical; base 0 without `--base` takes upstream's original, unrelocated path and is no longer compared.
 * **MSVC Build Metrics**: Release build of `redmp1_recomp.lib` completes in ~22.8 seconds; static library size is 34.9 MiB (33.8 MiB total object size).
 
 ## 7. First Firmware Call
