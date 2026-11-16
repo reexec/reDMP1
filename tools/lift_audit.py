@@ -17,8 +17,12 @@ THUNK_RE = re.compile(r"^void (psp_(?:func|at)_[0-9A-Fa-f]{8})\(void\)")
 THUNK_OWNER_RE = re.compile(
     r"^void psp_(?:func|at)_([0-9A-Fa-f]{8})\(void\)\s*\{\s*psp_body_([0-9A-Fa-f]{8})\("
 )
-TAIL_CALL_RE = re.compile(r"\b(psp_func_[0-9A-Fa-f]{8}|psp_at_[0-9A-Fa-f]{8}|psp_import_[0-9A-Fa-f]{8}|psp_dispatch)\(")
-STATIC_TAIL_RE = re.compile(r"^\s*(psp_(?:func|at)_([0-9A-Fa-f]{8}))\(\);\s*$")
+TAIL_CALL_RE = re.compile(
+    r"\b(?:PSP_TAIL\((psp_(?:func|at)_[0-9A-Fa-f]{8})\)|(psp_func_[0-9A-Fa-f]{8}|psp_at_[0-9A-Fa-f]{8}|psp_import_[0-9A-Fa-f]{8}|psp_dispatch_tail|psp_dispatch)\()"
+)
+STATIC_TAIL_RE = re.compile(r"^\s*(?:PSP_TAIL\((psp_(?:func|at)_([0-9A-Fa-f]{8}))\)|(psp_(?:func|at)_([0-9A-Fa-f]{8}))\(\));\s*$")
+DIRECT_STATIC_TAIL_RE = re.compile(r"\b(psp_(?:func|at)_[0-9A-Fa-f]{8})\(\);")
+DIRECT_DISPATCH_TAIL_RE = re.compile(r"\bpsp_dispatch\([^)]*\);\s*return;")
 
 BRANCH_LIKELY = {
     "beql", "bnel", "blezl", "bgtzl", "bltzl", "bgezl", "bc1fl", "bc1tl",
@@ -128,6 +132,7 @@ def audit_body(
     tail_edges: dict[int, set[int]],
     counts: Counter[str],
     mismatches: list[dict],
+    trampoline: bool = False,
 ) -> None:
     insns: list[tuple[int, str, str, int]] = []  # (addr, mnem, ops, line_idx)
     for idx, line in enumerate(lines):
@@ -199,18 +204,19 @@ def audit_body(
                 "tail": tail_lines[-10:],
             })
     elif kind == "jr_reg":
-        if "psp_dispatch(" not in tail_joined or "return;" not in tail_joined:
+        disp_tok = "psp_dispatch_tail(" if trampoline else "psp_dispatch("
+        if disp_tok not in tail_joined or "return;" not in tail_joined:
             mismatches.append({
                 "body": body_addr,
                 "kind": kind,
                 "insn_addr": ctrl_addr,
                 "insn": f"{ctrl_mnem} {ctrl_ops}",
-                "reason": "jr <reg> missing psp_dispatch / return",
+                "reason": f"jr <reg> missing {disp_tok} / return",
                 "tail": tail_lines[-10:],
             })
     elif kind == "j":
         has_goto = "goto L_" in tail_joined
-        has_tail = bool(TAIL_CALL_RE.search(tail_joined)) and "return;" in tail_joined
+        has_tail = bool(TAIL_CALL_RE.search(tail_joined)) and ("return;" in tail_joined or "PSP_TAIL(" in tail_joined)
         if not (has_goto or has_tail):
             mismatches.append({
                 "body": body_addr,
@@ -304,23 +310,48 @@ def audit_body(
                     "tail": window,
                 })
 
-    # Tail-call check across the entire body: collect tail-call edges and flag self-tail-calls.
+    # Tail-call check across the entire body: collect tail-call edges, flag self-tail-calls,
+    # and in trampoline mode verify no body-ending transfer remains a direct call.
     for idx in range(len(lines) - 1):
-        mt = STATIC_TAIL_RE.match(lines[idx])
+        line = lines[idx]
+        if trampoline:
+            if DIRECT_STATIC_TAIL_RE.search(line) and "PSP_CALL_BEGIN" not in line and (idx == 0 or "PSP_CALL_BEGIN" not in lines[idx - 1]):
+                mismatches.append({
+                    "body": body_addr,
+                    "kind": "direct_tail_call",
+                    "insn_addr": body_addr,
+                    "insn": line.strip(),
+                    "reason": "body-ending or static call remains direct (not PSP_TAIL/psp_run) in trampoline mode",
+                    "tail": lines[max(0, idx - 2):min(len(lines), idx + 3)],
+                })
+            if DIRECT_DISPATCH_TAIL_RE.search(line):
+                mismatches.append({
+                    "body": body_addr,
+                    "kind": "direct_tail_call",
+                    "insn_addr": body_addr,
+                    "insn": line.strip(),
+                    "reason": "tail dispatch remains psp_dispatch() instead of psp_dispatch_tail() in trampoline mode",
+                    "tail": lines[max(0, idx - 2):min(len(lines), idx + 3)],
+                })
+
+        mt = STATIC_TAIL_RE.match(line)
         if not mt:
             continue
-        if lines[idx + 1].strip() != "return;":
+        is_psp_tail = mt.group(1) is not None
+        if not is_psp_tail and lines[idx + 1].strip() != "return;":
             continue
         # Ensure it's not a regular call wrapped in PSP_CALL_BEGIN/PSP_CALL_END.
         if idx > 0 and "PSP_CALL_BEGIN" in lines[idx - 1]:
             continue
-        target_entry = int(mt.group(2), 16)
+        target_name = mt.group(1) or mt.group(3)
+        target_hex = mt.group(2) or mt.group(4)
+        target_entry = int(target_hex, 16)
         target_owner = entry_owner.get(target_entry, target_entry)
         tail_edges.setdefault(body_addr, set()).add(target_owner)
-        if target_owner == body_addr:
+        if not is_psp_tail and target_owner == body_addr:
             # Find nearest preceding instruction comment for context.
             insn_addr = body_addr
-            insn_text = mt.group(1)
+            insn_text = target_name
             for back in range(idx - 1, -1, -1):
                 mc = INSN_CMT_RE.match(lines[back])
                 if mc:
@@ -389,6 +420,7 @@ def main() -> int:
     ap.add_argument("--image", default=None, help="Relocated binary image (e.g. from allegrexrecomp relocate)")
     ap.add_argument("--base", default="0x08804000", help="Image base address in hex")
     ap.add_argument("--max-mismatches", type=int, default=40, help="Max mismatches to print (0 = all)")
+    ap.add_argument("--trampoline", action="store_true", default=None, help="Enforce trampoline mode rules (auto-detected from *_funcs.h by default)")
     args = ap.parse_args()
 
     gen_dir = Path(args.generated)
@@ -396,6 +428,12 @@ def main() -> int:
     if not c_files:
         print(f"Error: no *_funcs_*.c files found in {gen_dir}", file=sys.stderr)
         return 1
+
+    trampoline = bool(args.trampoline)
+    if args.trampoline is None:
+        hdrs = sorted(gen_dir.glob("*_funcs.h"))
+        if hdrs and "#define PSP_TAIL(" in hdrs[0].read_text(encoding="utf-8", errors="replace"):
+            trampoline = True
 
     image: bytes | None = None
     base = int(args.base, 16)
@@ -437,6 +475,7 @@ def main() -> int:
                     audit_body(
                         cur_addr, cur_lines, image, base, known_entries,
                         entry_owner, tail_edges, counts, mismatches,
+                        trampoline=trampoline,
                     )
                     cur_addr = None
                     cur_lines = []

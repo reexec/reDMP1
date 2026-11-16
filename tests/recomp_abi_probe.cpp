@@ -28,6 +28,16 @@
         }                                                                                          \
     } while (0)
 
+extern "C" {
+#ifdef _MSC_VER
+extern __declspec(thread) psp_fn_t psp_next;
+#else
+extern thread_local psp_fn_t psp_next;
+#endif
+void psp_run(psp_fn_t fn);
+void psp_dispatch_tail(uint32_t addr);
+}
+
 static int g_dummy_calls = 0;
 static void DummyTarget(void)
 {
@@ -164,6 +174,89 @@ int main(void)
     // (vreg >> 5) & 3 = 2 -> vreg = 0x02 | (2 << 5) = 0x42
     psp_sv_s(0x42, 0x08802028);
     CHECK(std::fabs(psp_read_f32(0x08802028) - 6.0f) < 0.0001f);
+
+    // 4. Trampoline: 3-function cycle (direct + psp_dispatch_tail) stays flat on host stack,
+    //    psp_cpu.unwind breaks out of psp_run, and GuardedRun stop clears stale psp_next.
+    {
+        static int g_tramp_iters = 0;
+        static uintptr_t g_stack_first = 0;
+        static uintptr_t g_stack_last = 0;
+        static bool g_after_unwind_resumed = false;
+
+        struct TrampTest {
+            static void FnA() {
+                volatile char marker = 0;
+                const uintptr_t sp = reinterpret_cast<uintptr_t>(&marker);
+                if (g_tramp_iters == 0) g_stack_first = sp;
+                g_stack_last = sp;
+                if (++g_tramp_iters >= 100000) {
+                    return;
+                }
+                psp_dispatch_tail(0x08803004u);
+            }
+            static void FnB() {
+                psp_next = FnC;
+            }
+            static void FnC() {
+                psp_next = FnA;
+            }
+            static void UnwindLeaf() {
+                // Return to outer frame 0x08803100u while inner frame is 0x08803200u.
+                CHECK(psp_ra_is_jump(0x08803100u) == 0);
+                CHECK(psp_cpu.unwind == 0x08803100u);
+                // Even if psp_next was set, psp_run must clear it and exit on unwind.
+                psp_next = FnA;
+            }
+            static void UnwindMid() {
+                psp_frame f = { 0x08803200u, psp_cpu.frame };
+                psp_cpu.frame = &f;
+                psp_run(UnwindLeaf);
+                psp_cpu.frame = f.prev;
+                if (psp_cpu.unwind) {
+                    if (psp_cpu.unwind == 0x08803200u) psp_cpu.unwind = 0;
+                    else return;
+                }
+                g_after_unwind_resumed = true;
+            }
+            static void UnwindOuter() {
+                psp_frame f = { 0x08803100u, psp_cpu.frame };
+                psp_cpu.frame = &f;
+                psp_run(UnwindMid);
+                psp_cpu.frame = f.prev;
+                if (psp_cpu.unwind) {
+                    if (psp_cpu.unwind == 0x08803100u) psp_cpu.unwind = 0;
+                }
+                g_after_unwind_resumed = true;
+            }
+            static void NormalLeaf() {
+                psp_cpu.r[2] = 0x1234u;
+            }
+        };
+
+        recomp_abi_reset();
+        psp_register(0x08803000u, TrampTest::FnA);
+        psp_register(0x08803004u, TrampTest::FnB);
+        psp_call_from_host(0x08803000u);
+        CHECK(g_tramp_iters == 100000);
+        CHECK(g_stack_first != 0 && g_stack_first == g_stack_last);
+        CHECK(psp_next == nullptr);
+
+        // Test psp_cpu.unwind across nested psp_run
+        g_after_unwind_resumed = false;
+        psp_register(0x08803100u, TrampTest::UnwindOuter);
+        psp_call_from_host(0x08803100u);
+        CHECK(g_after_unwind_resumed);
+        CHECK(psp_cpu.unwind == 0);
+        CHECK(psp_next == nullptr);
+
+        // Test stale psp_next cleared on new psp_call_from_host
+        psp_next = TrampTest::FnA;
+        psp_register(0x08803300u, TrampTest::NormalLeaf);
+        psp_call_from_host(0x08803300u);
+        CHECK(psp_cpu.r[2] == 0x1234u);
+        CHECK(psp_next == nullptr);
+        recomp_abi_reset();
+    }
 
     std::printf("[recomp_abi_probe] All checks passed successfully!\n");
     return 0;

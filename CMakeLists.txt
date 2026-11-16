@@ -39,6 +39,7 @@ set(ALLEGREXRECOMP_PATCHES
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/psprecomp/0001-relocate-prx-at-base.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/psprecomp/0003-jalr-fallthrough.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/psprecomp/0004-j-owned-target-goto.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/psprecomp/0005-emit-trampoline.patch"
 )
 
 foreach(patch IN LISTS ALLEGREXRECOMP_PATCHES)
