@@ -93,6 +93,10 @@ flowchart TD
 | 플레이 효과음·키음 | `sceSasCore` (`v=6, v=7`) | `0x08D81E50`/`0x08D88FE0` (`0x7150` B) | VAG, `pitch=0x1000`, `loop=1`, `00=1811, 01=1, 07=1` | `ch2` (`256`) |
 
 * 게스트 헬퍼 `0x0885215C`는 모든 효과음 호출에서 `__sceSasSetVoice(..., loop=1)`을 전달하며, 단발 효과음은 VAG 블록 플래그 `0x01`(LoopEnd 단독, `0x02` 미설정) + `0x07`(End+Mute)로 끝을 표시하고 루프 음원(`v=2, v=3`)만 `0x06`/`0x02`/`0x03`을 사용한다.
+* **플레이 중 키음 경로 (`--max-vblanks 2800`, 확인됨)**:
+  * `BOOT.BIN`이 import하는 `sceSasCore` NID는 13개(`__sceSasInit`, `__sceSasCore`, `__sceSasSetVoice`, `__sceSasSetKeyOn`, `__sceSasSetKeyOff`, `__sceSasSetPitch`, `__sceSasSetVolume`, `__sceSasSetADSR`, `__sceSasSetSimpleADSR`, `__sceSasGetEndFlag`, `__sceSasRevType`, `__sceSasRevEVOL`, `__sceSasRevVON`)가 전부이며 미구현 NID 호출은 없다.
+  * 플레이 중 곡 시작/버튼 입력 키음(`v=12..22`)은 모두 VAG(`startOff=0x0`, `loop=1`, `flags=0x00..0x01`)이며, `__sceSasSetPitch(0x1000)`(44.1 kHz), `__sceSasSetADSR(0xF, 0x40000000, 0x64, 0x64, 0x10000000)`, `__sceSasSetVolume`으로 구동된다.
+  * 일부 키음/스테레오 보이스(`v=16..22` 등)는 스테레오 폭 확장을 위해 `L=-4032, R=4096` 또는 `L=-3174, R=3225` 같은 역위상 좌우 볼륨을 사용하며, 일부 곡 시작/효과음 VAG(`v=2, v=3, v=4, v=12`)에는 원본 데이터 자체에 `filter=0, shift=0/1` 블록(예: `v=12` `0x4630`: `b0=0x01, b2=0x71, b3=0x77`)이 포함되어 있다.
 
 ## 9. 그리기 스레드 GE 리스트 규모와 소리 스레드 우선순위 관계 (**확인됨**)
 
@@ -187,6 +191,10 @@ flowchart TD
 | Gameplay SFX/keysounds | `sceSasCore` (`v=6, v=7`) | `0x08D81E50`/`0x08D88FE0` (`0x7150` B) | VAG, `pitch=0x1000`, `loop=1`, `00=1811, 01=1, 07=1` | `ch2` (`256`) |
 
 * Guest helper `0x0885215C` passes `loop=1` to `__sceSasSetVoice` for all triggers; one-shot SFX carry `0x01` (`LoopEnd` without `0x02`) + `0x07` (`End+Mute`), while looping voices (`v=2, v=3`) carry `0x06`/`0x02`/`0x03`.
+* **Gameplay key-sound path (`--max-vblanks 2800`, Confirmed)**:
+  * `BOOT.BIN` imports exactly 13 `sceSasCore` NIDs (`__sceSasInit`, `__sceSasCore`, `__sceSasSetVoice`, `__sceSasSetKeyOn`, `__sceSasSetKeyOff`, `__sceSasSetPitch`, `__sceSasSetVolume`, `__sceSasSetADSR`, `__sceSasSetSimpleADSR`, `__sceSasGetEndFlag`, `__sceSasRevType`, `__sceSasRevEVOL`, `__sceSasRevVON`), with 0 unimplemented NID calls.
+  * Gameplay key sounds (`v=12..22`) all use raw VAG (`startOff=0x0`, `loop=1`, `flags=0x00..0x01`), `__sceSasSetPitch(0x1000)` (44.1 kHz), `__sceSasSetADSR(0xF, 0x40000000, 0x64, 0x64, 0x10000000)`, and `__sceSasSetVolume`.
+  * Several key-sound voices (`v=16..22`, etc.) use phase-inverted stereo volumes such as `L=-4032, R=4096` or `L=-3174, R=3225`, and some VAG assets (`v=2, v=3, v=4, v=12`) contain raw `filter=0, shift=0/1` blocks (e.g., `v=12` `0x4630`: `b0=0x01, b2=0x71, b3=0x77`).
 
 ## 8. Drawing Thread GE List Size vs. Audio Thread Priority (**Confirmed**)
 
