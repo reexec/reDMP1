@@ -1,5 +1,7 @@
+option(REDMP1_RECOMP_UNOPT "Build generated code without optimization (/Od, -O0) for stack/trampoline measurement" OFF)
+
 if(REDMP1_RECOMP_SRCS)
-    if(MSVC)
+    if(MSVC AND NOT REDMP1_RECOMP_UNOPT)
         # The generated code is always built optimized so that lifted tail calls become
         # jumps (issue #16). MSVC rejects /O2 together with /RTC1, and the Visual Studio
         # generator takes these from both the C and C++ configuration flags.
@@ -25,9 +27,17 @@ if(REDMP1_RECOMP_SRCS)
         target_compile_definitions(redmp1_recomp PRIVATE PSPRECOMP_TRACE)
     endif()
     if(MSVC)
-        target_compile_options(redmp1_recomp PRIVATE /O2 /W0 /MP /utf-8 /bigobj $<$<CONFIG:Release>:/Z7>)
+        if(REDMP1_RECOMP_UNOPT)
+            target_compile_options(redmp1_recomp PRIVATE /Od /W0 /MP /utf-8 /bigobj $<$<CONFIG:Release>:/Z7>)
+        else()
+            target_compile_options(redmp1_recomp PRIVATE /O2 /W0 /MP /utf-8 /bigobj $<$<CONFIG:Release>:/Z7>)
+        endif()
         target_compile_definitions(redmp1_recomp PRIVATE _CRT_SECURE_NO_WARNINGS)
     else()
-        target_compile_options(redmp1_recomp PRIVATE -O2 -w)
+        if(REDMP1_RECOMP_UNOPT)
+            target_compile_options(redmp1_recomp PRIVATE -O0 -w)
+        else()
+            target_compile_options(redmp1_recomp PRIVATE -O2 -w)
+        endif()
     endif()
 endif()

@@ -38,12 +38,15 @@ def main():
     parser.add_argument("--outdir", default=str(DEFAULT_OUTDIR), help="Output directory for generated C files")
     parser.add_argument("--prefix", default=None, help="Symbol/file prefix (defaults to lift.json prefix)")
     parser.add_argument("--base", default=None, help="Base address for PRX relocation (defaults to lift.json base)")
+    parser.add_argument("--trampoline", action="store_true", default=None, help="Emit trampoline tail transfers (defaults to lift.json)")
+    parser.add_argument("--no-trampoline", action="store_false", dest="trampoline", help="Disable trampoline tail transfers")
     parser.add_argument("--info-only", action="store_true", help="Only run allegrexrecomp info")
     parser.add_argument("--funcs-only", action="store_true", help="Only run allegrexrecomp funcs")
     args = parser.parse_args()
 
     base = args.base
     prefix = args.prefix
+    trampoline = args.trampoline
     config_path = Path(args.config)
     if config_path.is_file():
         try:
@@ -53,8 +56,13 @@ def main():
                     base = cfg["base"]
                 if not prefix and "prefix" in cfg:
                     prefix = cfg["prefix"]
+                if trampoline is None and "trampoline" in cfg:
+                    trampoline = bool(cfg["trampoline"])
         except Exception as e:
             print(f"Warning: could not read {config_path}: {e}", file=sys.stderr)
+
+    if trampoline is None:
+        trampoline = False
 
     if not prefix:
         prefix = "dmp1"
@@ -82,10 +90,12 @@ def main():
     outdir = Path(args.outdir).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Emitting C code to: {outdir} (prefix: {prefix}, base: {base or '0x00000000'})")
+    print(f"Emitting C code to: {outdir} (prefix: {prefix}, base: {base or '0x00000000'}, trampoline: {trampoline})")
     cmd = ["emit", str(input_path), str(outdir), prefix]
     if base:
         cmd.extend(["--base", base])
+    if trampoline:
+        cmd.append("--trampoline")
     proc = run_allegrexrecomp(cmd)
     if proc.returncode != 0:
         print(f"allegrexrecomp emit failed with exit code {proc.returncode}", file=sys.stderr)

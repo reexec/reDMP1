@@ -1,6 +1,7 @@
 {
   "base": "0x08804000",
   "prefix": "dmp1",
+  "trampoline": true,
   "start_thread": {
     "priority": 32,
     "stack_size": 262144,
