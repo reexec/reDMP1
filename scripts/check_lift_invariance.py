@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Verify that allegrexrecomp funcs --list produces identical results under translation."""
+"""Verify that allegrexrecomp funcs --list produces identical results under translation.
+
+Both runs relocate (two non-zero bases). Base 0 is not used: without --base the lifter takes its
+original, unrelocated path, which seeds discovery differently, so the comparison would not be about
+translation at all."""
 
 import argparse
 import re
@@ -58,30 +62,32 @@ def main() -> int:
     parser.add_argument("--allegrexrecomp", required=True, help="Path to allegrexrecomp executable")
     parser.add_argument("--binary", required=True, help="Path to decrypted PRX binary (e.g. BOOT.BIN)")
     parser.add_argument("--base", default="0x08804000", help="Target relocated base address in hex")
+    parser.add_argument("--other-base", default="0x08A00000", help="Second relocated base to compare against")
     args = parser.parse_args()
 
     reloc_base = int(args.base, 0)
 
-    out_zero = run_funcs(args.allegrexrecomp, args.binary, 0)
+    other_base = int(args.other_base, 0)
+    out_zero = run_funcs(args.allegrexrecomp, args.binary, other_base)
     out_reloc = run_funcs(args.allegrexrecomp, args.binary, reloc_base)
 
-    data_zero = parse_output(out_zero, 0)
+    data_zero = parse_output(out_zero, other_base)
     data_reloc = parse_output(out_reloc, reloc_base)
 
     errors = []
 
     if data_zero["seeds"] != data_reloc["seeds"]:
-        errors.append(f"Seed count mismatch: base 0={data_zero['seeds']}, base {hex(reloc_base)}={data_reloc['seeds']}")
+        errors.append(f"Seed count mismatch: base {hex(other_base)}={data_zero['seeds']}, base {hex(reloc_base)}={data_reloc['seeds']}")
 
     if data_zero["functions_count"] != data_reloc["functions_count"]:
         errors.append(
-            f"Function count mismatch: base 0={data_zero['functions_count']}, "
+            f"Function count mismatch: base {hex(other_base)}={data_zero['functions_count']}, "
             f"base {hex(reloc_base)}={data_reloc['functions_count']}"
         )
 
     if data_zero["reached"] != data_reloc["reached"]:
         errors.append(
-            f"Reached mismatch:\n  base 0: {data_zero['reached']}\n  base {hex(reloc_base)}: {data_reloc['reached']}"
+            f"Reached mismatch:\n  base {hex(other_base)}: {data_zero['reached']}\n  base {hex(reloc_base)}: {data_reloc['reached']}"
         )
 
     keys_zero = set(data_zero["funcs"].keys())
@@ -91,7 +97,7 @@ def main() -> int:
     only_reloc = sorted(keys_reloc - keys_zero)
 
     if only_zero:
-        errors.append(f"{len(only_zero)} functions only in base 0 (first: 0x{only_zero[0]:08X})")
+        errors.append(f"{len(only_zero)} functions only in base {hex(other_base)} (first: 0x{only_zero[0]:08X})")
     if only_reloc:
         errors.append(f"{len(only_reloc)} functions only in base {hex(reloc_base)} (first: 0x{only_reloc[0]:08X})")
 
