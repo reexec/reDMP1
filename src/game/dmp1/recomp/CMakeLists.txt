@@ -1,18 +1,4 @@
-option(REDMP1_RECOMP_UNOPT "Build generated code without optimization (/Od, -O0) for stack/trampoline measurement" OFF)
-
 if(REDMP1_RECOMP_SRCS)
-    if(MSVC AND NOT REDMP1_RECOMP_UNOPT)
-        # The generated code is always built optimized so that lifted tail calls become
-        # jumps (issue #16). MSVC rejects /O2 together with /RTC1, and the Visual Studio
-        # generator takes these from both the C and C++ configuration flags.
-        foreach(_flag_var IN ITEMS CMAKE_C_FLAGS_DEBUG CMAKE_C_FLAGS_RELWITHDEBINFO
-                                   CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS_RELWITHDEBINFO)
-            string(REPLACE "/RTC1" "" ${_flag_var} "${${_flag_var}}")
-            string(REPLACE "/Od" "" ${_flag_var} "${${_flag_var}}")
-            string(REPLACE "/Ob0" "" ${_flag_var} "${${_flag_var}}")
-        endforeach()
-    endif()
-
     add_library(redmp1_recomp STATIC
         ${REDMP1_RECOMP_SRCS}
     )
@@ -27,17 +13,9 @@ if(REDMP1_RECOMP_SRCS)
         target_compile_definitions(redmp1_recomp PRIVATE PSPRECOMP_TRACE)
     endif()
     if(MSVC)
-        if(REDMP1_RECOMP_UNOPT)
-            target_compile_options(redmp1_recomp PRIVATE /Od /W0 /MP /utf-8 /bigobj $<$<CONFIG:Release>:/Z7>)
-        else()
-            target_compile_options(redmp1_recomp PRIVATE /O2 /W0 /MP /utf-8 /bigobj $<$<CONFIG:Release>:/Z7>)
-        endif()
+        target_compile_options(redmp1_recomp PRIVATE /W0 /MP /utf-8 /bigobj $<$<CONFIG:Release>:/Z7>)
         target_compile_definitions(redmp1_recomp PRIVATE _CRT_SECURE_NO_WARNINGS)
     else()
-        if(REDMP1_RECOMP_UNOPT)
-            target_compile_options(redmp1_recomp PRIVATE -O0 -w)
-        else()
-            target_compile_options(redmp1_recomp PRIVATE -O2 -w)
-        endif()
+        target_compile_options(redmp1_recomp PRIVATE -w)
     endif()
 endif()
