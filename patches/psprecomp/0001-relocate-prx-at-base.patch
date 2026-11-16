@@ -1,19 +1,195 @@
-From e039f3f79b965392d36e19d0c9352c4a5f8a42ec Mon Sep 17 00:00:00 2001
-From: Kitae Noh <nworkers@gmail.com>
-Date: Fri, 13 Nov 2026 03:02:24 +0900
-Subject: [PATCH 1/2] Add --base option to emit/funcs and relocate subcommand
+From 7546564284a8d8e2d312197ce9a400e8441c1f58 Mon Sep 17 00:00:00 2001
+From: Kitae Noh <5194831+nworkers@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 02:27:43 +0900
+Subject: [PATCH] container: relocate a PRX to a chosen base (`--base`,
+ `relocate`)
 
+A PRX links at zero, and allegrexrecomp lifts it there: every address in the
+generated code is module-relative. A host that wants the module where a PSP
+would load it (user modules start at 0x08804000) has had to translate every
+address at run time. This lets the toolkit do it once, at lift time.
+
+- `prx_relocate()` builds the loaded image (all PT_LOAD segments, BSS zeroed)
+  and applies SHT_PRXRELOC at a caller-chosen base: R_MIPS_32, R_MIPS_26, and
+  HI16/LO16 pairs (HI16 paired with the nearest following LO16, with the carry
+  a LO16 of 0x8000 or more needs).
+- `funcs` and `emit` take `--base <addr>`; with it they discover and emit from
+  the relocated image. Without it nothing changes.
+- `relocate <file> <base> <out>` writes the relocated image, so a host can
+  load the same bytes the code was lifted from.
+- Pointer seeds honour the relocation's segment indices. `ofsbase` names the
+  segment the patched word lives in and `addrbase` the segment the stored
+  address is relative to; both were assumed to be segment 0, so relocations
+  in a second segment read the wrong word.
+- The unrelocated lui+addiu immediate scan is skipped when the image is
+  relocated: with the image at its base those pairs already appear through
+  the relocation table, and at base 0 small immediates collide with .text.
+
+The relocated path reuses psp_collect_exports and psp_collect_pointer_seeds
+(through psp_collect_pointer_seeds_at, which reads patched words from the
+relocated image and the relocation table from the file).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- tools/allegrexrecomp/container.c | 112 +++++++++++
- tools/allegrexrecomp/container.h |   7 +
- tools/allegrexrecomp/main.c      | 322 ++++++++++++++++++++++++++-----
- 3 files changed, 389 insertions(+), 52 deletions(-)
+ tools/allegrexrecomp/analyze.c   |   7 +-
+ tools/allegrexrecomp/container.c | 207 ++++++++++++++++++++++++++++---
+ tools/allegrexrecomp/container.h |  15 +++
+ tools/allegrexrecomp/main.c      | 174 +++++++++++++++++++++-----
+ 4 files changed, 353 insertions(+), 50 deletions(-)
 
+diff --git a/tools/allegrexrecomp/analyze.c b/tools/allegrexrecomp/analyze.c
+index cdee5d7..aa0b019 100644
+--- a/tools/allegrexrecomp/analyze.c
++++ b/tools/allegrexrecomp/analyze.c
+@@ -533,7 +533,12 @@ int a_discover(a_analysis *an, const uint32_t *seeds, int nseeds) {
+      * data table. Any lui whose paired addiu/ori yields an address that is
+      * in range and decodes as valid code is promoted to an entry, same
+      * over-split-is-safe reasoning as everywhere else in this file. */
+-    if (an->scan_calls) {
++    /* When an->image is present, pointer seeds are already harvested from
++     * relocation tables (or ET_EXEC data scan). Scanning .text for lui+addiu
++     * pairs on an unrelocated PRX (whose lui immediates are 0) produces false
++     * entries at 0x0000xxxx, while on a relocated PRX R_MIPS_HI16/LO16
++     * relocations already enumerate every split-pair code reference. */
++    if (an->scan_calls && !an->image) {
+         uint32_t sbase = an->scan_size ? an->scan_base : an->base;
+         uint32_t ssize = an->scan_size ? an->scan_size : an->size;
+         for (uint32_t off = 0; off + 4 <= ssize; off += 4) {
 diff --git a/tools/allegrexrecomp/container.c b/tools/allegrexrecomp/container.c
-index b177c50..55053a3 100644
+index b177c50..4b7bf79 100644
 --- a/tools/allegrexrecomp/container.c
 +++ b/tools/allegrexrecomp/container.c
-@@ -646,3 +646,115 @@ int psp_collect_exports(const uint8_t *d, size_t len,
+@@ -512,10 +512,32 @@ static int looks_like_code(const uint8_t *d, size_t len, const elf_info *e,
+     return 1;
+ }
+ 
+-int psp_collect_pointer_seeds(const uint8_t *d, size_t len, const elf_info *e,
+-                              uint32_t load_bias, uint32_t *out, int max) {
++static int seg_word_offset(const elf_info *e, uint8_t seg_idx, uint32_t load_bias,
++                           int relocated, uint32_t img_base, size_t *out_off) {
++    if (e->nsegments) {
++        if (seg_idx >= e->nsegments) return -1;
++        if (relocated) {
++            if (e->seg[seg_idx].addr < img_base) return -1;
++            *out_off = (size_t)(e->seg[seg_idx].addr - img_base);
++        } else {
++            *out_off = (size_t)e->seg[seg_idx].offset;
++        }
++        return 0;
++    }
++    *out_off = (size_t)load_bias;
++    return 0;
++}
++
++int psp_collect_pointer_seeds_at(const uint8_t *d, size_t len,
++                                 const uint8_t *img, size_t img_len,
++                                 uint32_t img_base, const elf_info *e,
++                                 uint32_t load_bias, uint32_t *out, int max) {
+     if (!e->shoff || !e->shnum || !e->text_size) return 0;
+ 
++    const int relocated = (img != NULL);
++    const uint8_t *word_buf = relocated ? img : d;
++    const size_t word_len   = relocated ? img_len : len;
++
+     const uint32_t text_lo = e->text_addr;
+     const uint32_t text_hi = e->text_addr + e->text_size;
+     int found = 0;
+@@ -539,6 +561,20 @@ int psp_collect_pointer_seeds(const uint8_t *d, size_t len, const elf_info *e,
+         for (uint32_t r = 0; r + 8 <= size; r += 8) {
+             uint32_t r_offset = rd32(d + off + r);
+             uint32_t r_info   = rd32(d + off + r + 4);
++            uint8_t rtype    = (uint8_t)(r_info & 0xFF);
++            uint8_t ofsbase  = (uint8_t)((r_info >> 8) & 0xFF);
++            uint8_t addrbase = (uint8_t)((r_info >> 16) & 0xFF);
++
++            /* Multi-segment PRX relocations encode the target section/segment
++             * in ofsbase (where the word lives) and the referenced segment in
++             * addrbase (whose base address is added). Assuming segment 0 for
++             * every entry misses .data relocations (ofsbase=1) and miscomputes
++             * targets relative to segment 1 (addrbase=1). */
++            size_t ofs_base_off = 0;
++            if (seg_word_offset(e, ofsbase, load_bias, relocated, img_base, &ofs_base_off) != 0)
++                continue;
++            if (e->nsegments && addrbase >= e->nsegments) continue;
++            uint32_t addr_base_val = (!relocated && e->nsegments) ? e->seg[addrbase].addr : 0;
+ 
+             /* HI16/LO16 pairs are how an address gets *computed in code*
+              * rather than stored in a word:
+@@ -552,36 +588,43 @@ int psp_collect_pointer_seeds(const uint8_t *d, size_t len, const elf_info *e,
+              * pairs, and the address is (hi << 16) + (int16)lo. The LO16 half
+              * is signed, which is why it cannot simply be OR'd in: a low half
+              * of 0x8000 or above borrows from the high half. */
+-            if ((r_info & 0xFF) == R_MIPS_HI16 && r + 16 <= size) {
+-                uint32_t lo_info = rd32(d + off + r + 12);
+-                if ((lo_info & 0xFF) == R_MIPS_LO16) {
+-                    uint32_t lo_offset = rd32(d + off + r + 8);
+-                    size_t hi_at = (uint32_t)(r_offset + load_bias);
+-                    size_t lo_at = (uint32_t)(lo_offset + load_bias);
+-                    if (hi_at + 4 <= len && lo_at + 4 <= len) {
+-                        uint32_t hi_imm = rd32(d + hi_at) & 0xFFFF;
+-                        int32_t  lo_imm = (int16_t)(rd32(d + lo_at) & 0xFFFF);
+-                        uint32_t target = (hi_imm << 16) + (uint32_t)lo_imm;
+-                        if (target >= text_lo && target < text_hi && !(target & 3)) {
+-                            if (found < max) out[found] = target;
+-                            found++;
++            if (rtype == R_MIPS_HI16) {
++                for (uint32_t k = r + 8; k + 8 <= size; k += 8) {
++                    uint32_t lo_info = rd32(d + off + k + 4);
++                    if ((lo_info & 0xFF) == R_MIPS_LO16) {
++                        uint8_t lo_ofs = (uint8_t)((lo_info >> 8) & 0xFF);
++                        size_t lo_base_off = 0;
++                        if (seg_word_offset(e, lo_ofs, load_bias, relocated, img_base, &lo_base_off) == 0) {
++                            uint32_t lo_offset = rd32(d + off + k);
++                            size_t hi_at = ofs_base_off + r_offset;
++                            size_t lo_at = lo_base_off + lo_offset;
++                            if (hi_at + 4 <= word_len && lo_at + 4 <= word_len) {
++                                uint32_t hi_imm = rd32(word_buf + hi_at) & 0xFFFF;
++                                int32_t  lo_imm = (int16_t)(rd32(word_buf + lo_at) & 0xFFFF);
++                                uint32_t target = (hi_imm << 16) + (uint32_t)lo_imm + addr_base_val;
++                                if (target >= text_lo && target < text_hi && !(target & 3)) {
++                                    if (found < max) out[found] = target;
++                                    found++;
++                                }
++                            }
+                         }
++                        break;
+                     }
+                 }
+                 continue;
+             }
+ 
+-            if ((r_info & 0xFF) != R_MIPS_32) continue;
++            if (rtype != R_MIPS_32) continue;
+ 
+             /* The relocated word holds the address. A PRX links at zero, so
+              * the stored value is already the module-relative address and
+              * needs no fixing up — only reading. */
+-            size_t at = (uint32_t)(r_offset + load_bias);
+-            if (at + 4 > len) continue;
++            size_t at = ofs_base_off + r_offset;
++            if (at + 4 > word_len) continue;
+ 
+-            uint32_t target = rd32(d + at);
++            uint32_t target = rd32(word_buf + at) + addr_base_val;
+             if (target & 3) continue;            /* not instruction-aligned */
+-            if (!looks_like_code(d, len, e, load_bias, target, text_lo, text_hi))
++            if (!looks_like_code(word_buf, word_len, e, load_bias, target, text_lo, text_hi))
+                 continue;
+ 
+             if (found < max) out[found] = target;
+@@ -591,6 +634,11 @@ int psp_collect_pointer_seeds(const uint8_t *d, size_t len, const elf_info *e,
+     return found;
+ }
+ 
++int psp_collect_pointer_seeds(const uint8_t *d, size_t len, const elf_info *e,
++                              uint32_t load_bias, uint32_t *out, int max) {
++    return psp_collect_pointer_seeds_at(d, len, NULL, 0, 0, e, load_bias, out, max);
++}
++
+ int psp_collect_exports(const uint8_t *d, size_t len,
+                         const psp_module_info *mi, uint32_t load_bias,
+                         uint32_t *out, int max) {
+@@ -646,3 +694,122 @@ int psp_collect_exports(const uint8_t *d, size_t len,
      }
      return found;
  }
@@ -28,10 +204,11 @@ index b177c50..55053a3 100644
 +
 +int prx_relocate(const uint8_t *in, size_t in_len, const elf_info *e,
 +                 uint32_t base, uint8_t **out_buf, size_t *out_size) {
-+    if (!e || e->nsegments <= 0) return -1;
++    if (!in || !e || e->nsegments <= 0 || !out_buf || !out_size) return -1;
 +
 +    uint32_t image_size = 0;
 +    for (int i = 0; i < e->nsegments; i++) {
++        if (e->seg[i].memsz > UINT32_MAX - e->seg[i].addr) return -1;
 +        uint32_t end = e->seg[i].addr + e->seg[i].memsz;
 +        if (end > image_size) image_size = end;
 +    }
@@ -41,7 +218,13 @@ index b177c50..55053a3 100644
 +    if (!buf) return -1;
 +
 +    for (int i = 0; i < e->nsegments; i++) {
-+        if (e->seg[i].offset + e->seg[i].filesz <= in_len && e->seg[i].filesz > 0) {
++        if (e->seg[i].filesz > 0) {
++            if (e->seg[i].offset > in_len ||
++                e->seg[i].filesz > in_len - e->seg[i].offset ||
++                e->seg[i].filesz > image_size - e->seg[i].addr) {
++                free(buf);
++                return -1;
++            }
 +            memcpy(buf + e->seg[i].addr, in + e->seg[i].offset, e->seg[i].filesz);
 +        }
 +    }
@@ -55,7 +238,7 @@ index b177c50..55053a3 100644
 +
 +        uint32_t off = rd32(in + sh + 16);
 +        uint32_t sz = rd32(in + sh + 20);
-+        if ((size_t)off + sz > in_len || (sz % 8) != 0) continue;
++        if ((size_t)off > in_len || (size_t)sz > in_len - off || (sz % 8) != 0) continue;
 +
 +        for (uint32_t r = 0; r + 8 <= sz; r += 8) {
 +            uint32_t r_offset = rd32(in + off + r);
@@ -66,10 +249,10 @@ index b177c50..55053a3 100644
 +            uint8_t addrbase = (uint8_t)((r_info >> 16) & 0xFF);
 +
 +            if (ofsbase >= e->nsegments || addrbase >= e->nsegments) continue;
-+            if (r_offset + 4 > e->seg[ofsbase].memsz) continue;
++            if (e->seg[ofsbase].memsz < 4 || r_offset > e->seg[ofsbase].memsz - 4) continue;
 +
 +            uint32_t patch_offset = e->seg[ofsbase].addr + r_offset;
-+            if (patch_offset + 4 > image_size) continue;
++            if (image_size < 4 || patch_offset > image_size - 4) continue;
 +
 +            uint32_t S = base + e->seg[addrbase].addr;
 +
@@ -130,11 +313,21 @@ index b177c50..55053a3 100644
 +    return 0;
 +}
 diff --git a/tools/allegrexrecomp/container.h b/tools/allegrexrecomp/container.h
-index af8bc51..d78cc6c 100644
+index af8bc51..f001f76 100644
 --- a/tools/allegrexrecomp/container.h
 +++ b/tools/allegrexrecomp/container.h
-@@ -178,6 +178,13 @@ int psp_collect_pointer_seeds(const uint8_t *data, size_t len, const elf_info *e
+@@ -176,8 +176,23 @@ typedef struct {
+ int psp_collect_pointer_seeds(const uint8_t *data, size_t len, const elf_info *e,
+                               uint32_t load_bias, uint32_t *out, int max);
  
++/* Same as psp_collect_pointer_seeds, but reads patched words from a relocated
++ * image `img` (mapped at `img_base`) while still reading relocation tables
++ * from `elf`. When `img` is NULL, behaves identically to psp_collect_pointer_seeds. */
++int psp_collect_pointer_seeds_at(const uint8_t *elf, size_t elf_len,
++                                 const uint8_t *img, size_t img_len,
++                                 uint32_t img_base, const elf_info *e,
++                                 uint32_t load_bias, uint32_t *out, int max);
++
  int elf_parse(const uint8_t *data, size_t len, elf_info *out);
  
 +/* Relocate a PRX (ELF32, e_type 0xFFA0) to a caller-specified base address.
@@ -148,24 +341,10 @@ index af8bc51..d78cc6c 100644
   * The PRX descriptor: where the export and import tables live, and the $gp
   * value the module's code assumes. Exported function addresses are the single
 diff --git a/tools/allegrexrecomp/main.c b/tools/allegrexrecomp/main.c
-index cbb67bf..1a293db 100644
+index cbb67bf..1e5a67c 100644
 --- a/tools/allegrexrecomp/main.c
 +++ b/tools/allegrexrecomp/main.c
-@@ -1,4 +1,4 @@
--/* allegrexrecomp — command-line front end.
-+/* allegrexrecomp ??command-line front end.
-  *
-  *   info    <file>                    identify and describe any layer of the stack
-  *   ls      <file.iso>                list a disc image
-@@ -25,16 +25,17 @@
- 
- static int usage(void) {
-     fprintf(stderr,
--        "allegrexrecomp — Allegrex static-recompilation toolkit\n"
-+        "allegrexrecomp ??Allegrex static-recompilation toolkit\n"
-         "\n"
-         "  allegrexrecomp info    <file>\n"
-         "  allegrexrecomp ls      <file.iso>\n"
+@@ -32,9 +32,10 @@ static int usage(void) {
          "  allegrexrecomp extract <file.iso> <substring> <outdir>\n"
          "  allegrexrecomp dis     <file> [start-addr] [count]\n"
          "  allegrexrecomp cover   <file>\n"
@@ -178,85 +357,7 @@ index cbb67bf..1a293db 100644
          "  allegrexrecomp decrypt <file> [--keys <path>]\n"
          "  allegrexrecomp kirk1   <file> [out] [--keys <path>]\n"
          "\n"
-@@ -42,10 +43,19 @@ static int usage(void) {
-         "ELF/PRX modules, and raw binaries.\n"
-         "\n"
-         "Key material is never bundled. Supply it via --keys, $PSPRECOMP_KEYS,\n"
--        "or ./keys/psp_keys.txt — see docs/DECRYPT.md.\n");
-+        "or ./keys/psp_keys.txt ??see docs/DECRYPT.md.\n");
-     return 2;
- }
- 
-+static inline uint16_t rd16(const uint8_t *p) {
-+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
-+}
-+
-+static inline uint32_t rd32(const uint8_t *p) {
-+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
-+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-+}
-+
- /* ---- info ---------------------------------------------------------------- */
- 
- static void print_iso_info(const char *path, FILE *f) {
-@@ -117,7 +127,7 @@ static void print_pbp_info(const uint8_t *d, size_t len) {
-     }
- 
-     /* Recurse one level into the executable payload. DATA.PSP is where the
--     * actual module lives, and its header names the module and the key tag —
-+     * actual module lives, and its header names the module and the key tag ??
-      * the two things you need before you can decrypt or decode it. */
-     if (pbp.size[6] && pbp.offset[6] + pbp.size[6] <= len) {
-         const uint8_t *inner = d + pbp.offset[6];
-@@ -149,7 +159,7 @@ static void print_psp_info(const uint8_t *d, size_t len) {
-     printf("  tag           0x%08X\n", h.tag);
-     for (int i = 0; i < h.nsegments && i < 4; i++)
-         printf("  segment %d     addr 0x%08X size %u\n", i, h.seg_address[i], h.seg_size[i]);
--    printf("\n  This module is encrypted. Decryption is phase 2 — see docs/DECRYPT.md.\n");
-+    printf("\n  This module is encrypted. Decryption is phase 2 ??see docs/DECRYPT.md.\n");
- }
- 
- static void print_elf_info(const uint8_t *d, size_t len) {
-@@ -242,7 +252,7 @@ static int cmd_info(const char *path) {
-         }
-         break;
-     default:
--        printf("format:   unrecognised — treating as raw Allegrex code\n");
-+        printf("format:   unrecognised ??treating as raw Allegrex code\n");
-         break;
-     }
- 
-@@ -328,7 +338,7 @@ static int find_code(const psp_blob *b, const uint8_t **code, uint32_t *size, ui
-     }
-     if (fmt == FMT_PSP || fmt == FMT_SCE) {
-         fprintf(stderr,
--            "this module is encrypted (%s) — decryption is phase 2, see docs/DECRYPT.md\n",
-+            "this module is encrypted (%s) ??decryption is phase 2, see docs/DECRYPT.md\n",
-             psp_format_name(fmt));
-         return -1;
-     }
-@@ -347,7 +357,7 @@ static int find_code(const psp_blob *b, const uint8_t **code, uint32_t *size, ui
-                     return 0;
-                 }
-             }
--            fprintf(stderr, "PBP DATA.PSP is %s — cannot decode yet\n",
-+            fprintf(stderr, "PBP DATA.PSP is %s ??cannot decode yet\n",
-                     psp_format_name(ifmt));
-             return -1;
-         }
-@@ -429,9 +439,9 @@ static int cmd_cover(const char *path) {
-     if (!total) { psp_blob_free(&b); return 0; }
- 
-     printf("decoded:  %llu (%.2f%%)\n", (unsigned long long)ok, 100.0 * (double)ok / (double)total);
--    printf("vfpu:     %llu (%.2f%%)  — recognised as VFPU, not yet named\n",
-+    printf("vfpu:     %llu (%.2f%%)  ??recognised as VFPU, not yet named\n",
-            (unsigned long long)vfpu, 100.0 * (double)vfpu / (double)total);
--    printf("unknown:  %llu (%.2f%%)  — decoder gaps, or data misread as code\n",
-+    printf("unknown:  %llu (%.2f%%)  ??decoder gaps, or data misread as code\n",
-            (unsigned long long)bad, 100.0 * (double)bad / (double)total);
- 
-     /* Top opcodes: a sanity check that we are looking at code at all. Real
-@@ -458,28 +468,56 @@ static int cmd_cover(const char *path) {
+@@ -458,9 +459,13 @@ static int cmd_cover(const char *path) {
  /* Load a decrypted module and run discovery over it. On success the caller
   * owns both `b` (psp_blob_free) and `an` (a_analysis_free). Shared by `funcs`
   * and `emit`, which differ only in what they do with the result. */
@@ -271,28 +372,19 @@ index cbb67bf..1a293db 100644
      if (psp_blob_read(path, b) != 0) { fprintf(stderr, "cannot read %s\n", path); return -1; }
  
      if (psp_sniff(b->data, b->size < 16 ? b->size : 16) != FMT_ELF ||
-         elf_parse(b->data, b->size, e) != 0 || !e->text_size) {
-         fprintf(stderr, "%s is not a decrypted ELF/PRX with code in it\n", path);
--        fprintf(stderr, "(encrypted modules must be decrypted first — see docs/DECRYPT.md)\n");
-+        fprintf(stderr, "(encrypted modules must be decrypted first ??see docs/DECRYPT.md)\n");
-         psp_blob_free(b);
+@@ -471,12 +476,34 @@ static int load_and_discover(const char *path, psp_blob *b, elf_info *e,
          return -1;
      }
  
--    memset(an, 0, sizeof *an);
--    /* Walk the whole loaded image, not just .text: a module can place
--     * executable code outside it (C++ static initialisers, notably), and
--     * restricting the extent to .text makes that code invisible. The linear
--     * jal harvest stays confined to .text via scan_base/scan_size. */
 +    uint8_t *reloc_buf = NULL;
 +    size_t reloc_sz = 0;
-     if (e->nsegments) {
++    if (base != 0 && e->nsegments) {
 +        if (prx_relocate(b->data, b->size, e, base, &reloc_buf, &reloc_sz) != 0) {
 +            fprintf(stderr, "failed to relocate PRX %s at 0x%08X\n", path, base);
 +            psp_blob_free(b);
 +            return -1;
 +        }
-+        e->entry += base + e->seg[0].addr;
++        e->entry += base;
 +        e->text_addr += base;
 +        e->stub_addr += base;
 +        if (e->modinfo_size) e->modinfo_addr += base;
@@ -302,169 +394,94 @@ index cbb67bf..1a293db 100644
 +        if (out_reloc_sz)  *out_reloc_sz = reloc_sz;
 +    }
 +
-+    memset(an, 0, sizeof *an);
+     memset(an, 0, sizeof *an);
+     /* Walk the whole loaded image, not just .text: a module can place
+      * executable code outside it (C++ static initialisers, notably), and
+      * restricting the extent to .text makes that code invisible. The linear
+      * jal harvest stays confined to .text via scan_base/scan_size. */
+-    if (e->nsegments) {
 +    if (reloc_buf) {
 +        an->code = reloc_buf + (e->seg[0].addr - base);
 +        an->base = e->seg[0].addr;
 +        an->size = e->seg[0].filesz;
-+        an->image = reloc_buf;
-+        an->image_base = base;
-+        an->image_size = (uint32_t)reloc_sz;
 +    } else if (e->nsegments) {
          an->code = b->data + e->seg[0].offset;
          an->base = e->seg[0].addr;
          an->size = e->seg[0].filesz;
-+        an->image      = b->data + e->seg[0].offset;
-+        an->image_base = e->seg[0].addr;
-+        an->image_size = e->seg[0].filesz;
-     } else {
-         an->code = b->data + e->text_offset;
-         an->base = e->text_addr;
-@@ -490,19 +528,127 @@ static int load_and_discover(const char *path, psp_blob *b, elf_info *e,
-     an->stub_addr = e->stub_addr;
+@@ -491,7 +518,11 @@ static int load_and_discover(const char *path, psp_blob *b, elf_info *e,
      an->stub_size = e->stub_size;
      an->scan_calls = 1;
--    /* The whole loaded segment, so jump tables in .rodata/.data can be read. */
+     /* The whole loaded segment, so jump tables in .rodata/.data can be read. */
 -    if (e->nsegments) {
--        an->image      = b->data + e->seg[0].offset;
--        an->image_base = e->seg[0].addr;
--        an->image_size = e->seg[0].filesz;
-+
 +    if (reloc_buf) {
-+        int cap = 1 + 512 + 16384;
-+        uint32_t *seeds = (uint32_t *)malloc((size_t)cap * sizeof *seeds);
-+        if (!seeds) {
-+            if (reloc_buf) free(reloc_buf);
-+            psp_blob_free(b);
-+            return -1;
-+        }
-+
-+        int nseeds = 0;
-+        seeds[nseeds++] = e->entry;
-+        int nexports = 0;
-+
-+        if (e->modinfo_size && (e->modinfo_addr - base) + 0x34 <= reloc_sz) {
-+            uint32_t ent_top = rd32(reloc_buf + (e->modinfo_addr - base) + 0x24);
-+            uint32_t ent_end = rd32(reloc_buf + (e->modinfo_addr - base) + 0x28);
-+            if (ent_top >= base && ent_end >= ent_top && (ent_end - base) <= reloc_sz) {
-+                uint32_t cur = ent_top - base;
-+                while (cur + 16 <= ent_end - base && nexports < 512) {
-+                    uint8_t ent_len = reloc_buf[cur + 8];
-+                    uint8_t var_cnt = reloc_buf[cur + 9];
-+                    uint16_t func_cnt = rd16(reloc_buf + cur + 10);
-+                    uint32_t tbl = rd32(reloc_buf + cur + 12);
-+                    uint32_t stride = ent_len ? (uint32_t)ent_len * 4 : 16;
-+                    if (tbl >= base && (tbl - base) < reloc_sz) {
-+                        uint32_t tbl_off = tbl - base;
-+                        uint32_t total = (uint32_t)func_cnt + var_cnt;
-+                        if (tbl_off + (total + func_cnt) * 4 <= reloc_sz) {
-+                            for (uint16_t f = 0; f < func_cnt && nexports < 512; f++) {
-+                                uint32_t fn = rd32(reloc_buf + tbl_off + (total + f) * 4);
-+                                seeds[nseeds++] = fn;
-+                                nexports++;
-+                            }
-+                        }
-+                    }
-+                    if (stride < 16) break;
-+                    cur += stride;
-+                }
-+            }
-+        }
-+
-+        int nptr = 0;
-+        for (uint32_t s = 0; s < e->shnum; s++) {
-+            size_t sh = (size_t)e->shoff + (size_t)s * e->shentsize;
-+            if (sh + 40 > b->size) break;
-+            uint32_t type = rd32(b->data + sh + 4);
-+            if (type != 0x700000A0u) continue;
-+            uint32_t off = rd32(b->data + sh + 16);
-+            uint32_t sz = rd32(b->data + sh + 20);
-+            if ((size_t)off + sz > b->size || (sz % 8) != 0) continue;
-+            for (uint32_t r = 0; r + 8 <= sz; r += 8) {
-+                uint32_t r_offset = rd32(b->data + off + r);
-+                uint32_t r_info = rd32(b->data + off + r + 4);
-+                uint8_t rtype = (uint8_t)(r_info & 0xFF);
-+                uint8_t ofsbase = (uint8_t)((r_info >> 8) & 0xFF);
-+                if (ofsbase >= e->nsegments) continue;
-+                uint32_t patch_off = (e->seg[ofsbase].addr - base) + r_offset;
-+                if (patch_off + 4 > reloc_sz) continue;
-+
-+                if (rtype == R_MIPS_32) {
-+                    uint32_t target = rd32(reloc_buf + patch_off);
-+                    if ((target & 3) == 0 && target >= e->text_addr && target < e->text_addr + e->text_size) {
-+                        if (nseeds + 1 >= cap) {
-+                            cap *= 2;
-+                            seeds = (uint32_t *)realloc(seeds, (size_t)cap * sizeof *seeds);
-+                        }
-+                        seeds[nseeds++] = target;
-+                        nptr++;
-+                    }
-+                } else if (rtype == R_MIPS_HI16) {
-+                    for (uint32_t k = r + 8; k < sz; k += 8) {
-+                        uint32_t next_info = rd32(b->data + off + k + 4);
-+                        if ((next_info & 0xFF) == R_MIPS_LO16) {
-+                            uint32_t lo_off = rd32(b->data + off + k);
-+                            uint8_t lo_ofs = (uint8_t)((next_info >> 8) & 0xFF);
-+                            if (lo_ofs < e->nsegments) {
-+                                uint32_t lo_patch = (e->seg[lo_ofs].addr - base) + lo_off;
-+                                if (lo_patch + 4 <= reloc_sz) {
-+                                    uint32_t hi_imm = rd32(reloc_buf + patch_off) & 0xFFFF;
-+                                    int32_t lo_imm = (int16_t)(rd32(reloc_buf + lo_patch) & 0xFFFF);
-+                                    uint32_t target = (hi_imm << 16) + (uint32_t)lo_imm;
-+                                    if ((target & 3) == 0 && target >= e->text_addr && target < e->text_addr + e->text_size) {
-+                                        if (nseeds + 1 >= cap) {
-+                                            cap *= 2;
-+                                            seeds = (uint32_t *)realloc(seeds, (size_t)cap * sizeof *seeds);
-+                                        }
-+                                        seeds[nseeds++] = target;
-+                                        nptr++;
-+                                    }
-+                                }
-+                            }
-+                            break;
-+                        }
-+                    }
-+                }
-+            }
-+        }
-+
-+        int rc = a_discover(an, seeds, nseeds);
-+        free(seeds);
-+        if (rc != 0) {
-+            fprintf(stderr, "discovery failed (out of memory)\n");
-+            if (reloc_buf) free(reloc_buf);
-+            psp_blob_free(b);
-+            return -1;
-+        }
-+
-+        if (out_nseeds)   *out_nseeds = nseeds;
-+        if (out_nexports) *out_nexports = nexports;
-+        if (out_nptr)     *out_nptr = nptr;
-+        (void)out_scanned;
-+        return 0;
-     }
- 
-     /* Seeds come from three places, in increasing order of how much they find:
-      *
-      *   1. the module entry point
--     *   2. the export table — a library entry nothing internal calls is
-+     *   2. the export table ??a library entry nothing internal calls is
-      *      unreachable from the entry point alone
--     *   3. R_MIPS_32 relocations pointing into .text — the stored function
-+     *   3. R_MIPS_32 relocations pointing into .text ??the stored function
-      *      pointers behind thread entries, callbacks and vtables, which no
++        an->image      = reloc_buf;
++        an->image_base = base;
++        an->image_size = (uint32_t)reloc_sz;
++    } else if (e->nsegments) {
+         an->image      = b->data + e->seg[0].offset;
+         an->image_base = e->seg[0].addr;
+         an->image_size = e->seg[0].filesz;
+@@ -507,27 +538,35 @@ static int load_and_discover(const char *path, psp_blob *b, elf_info *e,
       *      control-flow scan can see
       *
-@@ -531,7 +677,7 @@ static int load_and_discover(const char *path, psp_blob *b, elf_info *e,
+      * (`jal` targets are harvested separately, inside discovery itself.) */
+-    const uint32_t bias = e->nsegments ? e->seg[0].offset - e->seg[0].addr : 0;
++    const uint8_t *img = reloc_buf ? reloc_buf : b->data;
++    const size_t img_len = reloc_buf ? reloc_sz : b->size;
++    const uint32_t bias = reloc_buf
++        ? (uint32_t)(0 - base)
++        : (e->nsegments ? e->seg[0].offset - e->seg[0].addr : 0);
+ 
+     /* Size the buffer from an actual count rather than a guessed maximum. */
+-    int nptr_avail = psp_collect_pointer_seeds(b->data, b->size, e, bias, NULL, 0);
++    int nptr_avail = psp_collect_pointer_seeds_at(b->data, b->size,
++                                                  reloc_buf, reloc_sz, base,
++                                                  e, bias, NULL, 0);
+     int cap = 1 + 512 + nptr_avail;
+     uint32_t *seeds = (uint32_t *)malloc((size_t)cap * sizeof *seeds);
+-    if (!seeds) { psp_blob_free(b); return -1; }
++    if (!seeds) { free(reloc_buf); psp_blob_free(b); return -1; }
+ 
+     int nseeds = 0;
+     seeds[nseeds++] = e->entry;
+ 
+     psp_module_info mi;
+     int nexports = 0;
+-    if (e->modinfo_size && psp_modinfo_parse(b->data, b->size, e->modinfo_offset, &mi) == 0) {
+-        nexports = psp_collect_exports(b->data, b->size, &mi, bias, seeds + nseeds, 512);
++    uint32_t mi_off = reloc_buf ? (e->modinfo_addr - base) : e->modinfo_offset;
++    if (e->modinfo_size && psp_modinfo_parse(img, img_len, mi_off, &mi) == 0) {
++        nexports = psp_collect_exports(img, img_len, &mi, bias, seeds + nseeds, 512);
+         if (nexports > 512) nexports = 512;
+         nseeds += nexports;
+     }
+ 
+-    int nptr = psp_collect_pointer_seeds(b->data, b->size, e, bias,
+-                                         seeds + nseeds, cap - nseeds);
++    int nptr = psp_collect_pointer_seeds_at(b->data, b->size,
++                                            reloc_buf, reloc_sz, base,
++                                            e, bias, seeds + nseeds, cap - nseeds);
      if (nptr > cap - nseeds) nptr = cap - nseeds;
      nseeds += nptr;
  
--    /* A statically linked module (ET_EXEC) has empty relocation sections — its
-+    /* A statically linked module (ET_EXEC) has empty relocation sections ??its
-      * addresses are absolute, so there is nothing for the loader to patch and
+@@ -536,7 +575,7 @@ static int load_and_discover(const char *path, psp_blob *b, elf_info *e,
       * nothing to enumerate. Fall back to recognising pointers by shape, which
       * is a heuristic rather than a fact and is only used when enumeration
-@@ -572,13 +718,15 @@ static int load_and_discover(const char *path, psp_blob *b, elf_info *e,
+      * genuinely had nothing to offer. */
+-    if (nptr == 0 && e->nsegments) {
++    if (!reloc_buf && nptr == 0 && e->nsegments) {
+         const elf_segment *s = &e->seg[0];
+         uint32_t data_off = e->text_offset + e->text_size;
+         uint32_t seg_end  = s->offset + s->filesz;
+@@ -561,6 +600,7 @@ static int load_and_discover(const char *path, psp_blob *b, elf_info *e,
+     free(seeds);
+     if (rc != 0) {
+         fprintf(stderr, "discovery failed (out of memory)\n");
++        free(reloc_buf);
+         psp_blob_free(b);
+         return -1;
+     }
+@@ -572,13 +612,15 @@ static int load_and_discover(const char *path, psp_blob *b, elf_info *e,
      return 0;
  }
  
@@ -482,7 +499,7 @@ index cbb67bf..1a293db 100644
  
      printf("module:     %s\n", path);
      printf("code:       0x%08X + %u bytes  (%u instructions)\n",
-@@ -608,12 +756,15 @@ static int cmd_funcs(const char *path, int list) {
+@@ -608,12 +650,15 @@ static int cmd_funcs(const char *path, int list) {
       * nothing outside it does. */
      if (e.modinfo_size) {
          psp_module_info mi2;
@@ -502,16 +519,7 @@ index cbb67bf..1a293db 100644
  
                  /* Count functions per library, preserving first-seen order. */
                  char libs[64][32];
-@@ -647,7 +798,7 @@ static int cmd_funcs(const char *path, int list) {
-     }
- 
-     printf("indirect:   %d computed-jump sites; %d tables resolved -> %d targets\n",
--           an.nindirects, an.ntables, an.ntable_targets);
-+       an.nindirects, an.ntables, an.ntable_targets);
- 
-     /* The honest VFPU cost for this title: measured over discovered code, not
-      * over a segment that is mostly data. */
-@@ -696,6 +847,7 @@ static int cmd_funcs(const char *path, int list) {
+@@ -696,6 +741,7 @@ static int cmd_funcs(const char *path, int list) {
          }
      }
  
@@ -519,7 +527,7 @@ index cbb67bf..1a293db 100644
      a_analysis_free(&an);
      psp_blob_free(&b);
      return 0;
-@@ -703,29 +855,33 @@ static int cmd_funcs(const char *path, int list) {
+@@ -703,29 +749,33 @@ static int cmd_funcs(const char *path, int list) {
  
  /* ---- the emitter --------------------------------------------------------- */
  
@@ -560,16 +568,7 @@ index cbb67bf..1a293db 100644
              else nimp = 0;
          }
      }
-@@ -746,7 +902,7 @@ static int cmd_emit(const char *path, const char *outdir, const char *prefix) {
-     if (rc == 0) {
-         /* The instructions the emitter could not translate are the honest
-          * measure of how far the output is from running. They are traps, not
--         * silence, so they will announce themselves — but knowing the count
-+         * silence, so they will announce themselves ??but knowing the count
-          * up front is better than discovering it one crash at a time. */
-         printf("\n%llu of %llu instructions are VFPU and emit as traps (%.2f%%).\n",
-                (unsigned long long)an.vfpu, (unsigned long long)an.insns,
-@@ -754,15 +910,12 @@ static int cmd_emit(const char *path, const char *outdir, const char *prefix) {
+@@ -754,6 +804,7 @@ static int cmd_emit(const char *path, const char *outdir, const char *prefix) {
      }
  
      free(imp);
@@ -577,16 +576,7 @@ index cbb67bf..1a293db 100644
      a_analysis_free(&an);
      psp_blob_free(&b);
      return rc == 0 ? 0 : 1;
- }
- 
--/* Print one function's generated C. Bring-up is per-address forensics -- a
-- * register clobbered here, a frame not closed there -- and re-emitting a
-- * quarter-million lines to read sixty of them is a poor way to spend a minute.
-- * Same emitter, same output, one function. */
- static int cmd_dump(const char *path, const char *addrs) {
-     psp_blob b;
-     elf_info e;
-@@ -770,7 +923,7 @@ static int cmd_dump(const char *path, const char *addrs) {
+@@ -770,7 +821,7 @@ static int cmd_dump(const char *path, const char *addrs) {
      uint32_t addr = (uint32_t)strtoul(addrs, NULL, 0);
      int rc;
  
@@ -595,7 +585,7 @@ index cbb67bf..1a293db 100644
  
      rc = a_emit_one(&an, addr, stdout);
      if (rc != 0)
-@@ -782,6 +935,48 @@ static int cmd_dump(const char *path, const char *addrs) {
+@@ -782,6 +833,48 @@ static int cmd_dump(const char *path, const char *addrs) {
      return rc == 0 ? 0 : 1;
  }
  
@@ -644,34 +634,7 @@ index cbb67bf..1a293db 100644
  /* ---- decryption ---------------------------------------------------------- */
  
  static uint32_t rd32le(const uint8_t *p) {
-@@ -820,7 +1015,7 @@ static const uint8_t *find_psp_module(const uint8_t *d, size_t len, size_t *out_
- 
- /* Does a 0x30-byte block look like KIRK CMD1 metadata?
-  *
-- * The metadata block is highly constrained — a mode of exactly 1, a signature
-+ * The metadata block is highly constrained ??a mode of exactly 1, a signature
-  * flag of 0 or 1, a retail/devkit word that is 0 or all-ones, and 0x18 bytes
-  * of mandatory zeros. That is roughly 100 bits of structure, so a false
-  * positive in a few hundred bytes of header is very unlikely.
-@@ -828,7 +1023,7 @@ static const uint8_t *find_psp_module(const uint8_t *d, size_t len, size_t *out_
-  * This exists because the transform from a ~PSP header to a CMD1 header is the
-  * one part of the chain we do not yet have a trustworthy description of. Rather
-  * than guess an offset and silently decrypt garbage, we look for the block and
-- * report where it actually is — measuring the layout instead of assuming it.
-+ * report where it actually is ??measuring the layout instead of assuming it.
-  */
- static int looks_like_cmd1_meta(const uint8_t *m, size_t avail, uint32_t file_size) {
-     if (avail < KIRK1_META_SIZE) return 0;
-@@ -923,7 +1118,7 @@ static int cmd_decrypt(const char *path, const char *keypath) {
-     return 0;
- }
- 
--/* Decrypt a raw KIRK CMD1 blob. Complete and tested — the layer above it is
-+/* Decrypt a raw KIRK CMD1 blob. Complete and tested ??the layer above it is
-  * what is still missing. */
- static int cmd_kirk1(const char *path, const char *outpath, const char *keypath) {
-     psp_blob b;
-@@ -992,15 +1187,38 @@ int main(int argc, char **argv) {
+@@ -992,15 +1085,38 @@ int main(int argc, char **argv) {
      if (!strcmp(cmd, "info"))    return cmd_info(argv[2]);
      if (!strcmp(cmd, "ls"))      return cmd_ls(argv[2]);
      if (!strcmp(cmd, "cover"))   return cmd_cover(argv[2]);

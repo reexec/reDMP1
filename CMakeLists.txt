@@ -37,7 +37,6 @@ file(COPY "${ALLEGREXRECOMP_ORIG_DIR}/" DESTINATION "${ALLEGREXRECOMP_BUILD_DIR}
 find_package(Git REQUIRED)
 set(ALLEGREXRECOMP_PATCHES
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/psprecomp/0001-relocate-prx-at-base.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/psprecomp/0002-seed-harvest-segment-bases.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/psprecomp/0003-jalr-fallthrough.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/patches/psprecomp/0004-j-owned-target-goto.patch"
 )
