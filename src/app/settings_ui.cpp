@@ -1,6 +1,7 @@
 #include "settings_ui.h"
 
 #include "repsp/platform/overlay.h"
+#include "repsp/platform/post_shader.h"
 
 #include "imgui.h"
 
@@ -581,6 +582,8 @@ void SettingsUi::DrawGraphicsTab()
         ImGui::EndCombo();
     }
 
+    DrawPostShaderSection(combo_width);
+
     ImGui::SeparatorText("Stats Overlay");
     if (ImGui::Checkbox("Show FPS", &settings_.show_fps))
     {
@@ -595,6 +598,97 @@ void SettingsUi::DrawGraphicsTab()
     if (ImGui::Checkbox("Show GPU Memory", &settings_.show_gpu_memory))
     {
         Save();
+    }
+}
+
+void SettingsUi::DrawPostShaderSection(float combo_width)
+{
+    ImGui::SeparatorText("Screen shader");
+    repsp::platform::PostShaderControl* ctrl = repsp::platform::GetPostShaderControl();
+    if (ctrl == nullptr)
+    {
+        ImGui::BeginDisabled(true);
+        ImGui::SetNextItemWidth(combo_width);
+        if (ImGui::BeginCombo("Shader", repsp::platform::kPostShaderNoneId))
+        {
+            ImGui::EndCombo();
+        }
+        ImGui::EndDisabled();
+        ImGui::TextDisabled("Unavailable: OpenGL renderer required.");
+        return;
+    }
+
+    const std::string& active = ctrl->active_id();
+    ImGui::SetNextItemWidth(combo_width);
+    if (ImGui::BeginCombo("Shader", active.c_str()))
+    {
+        const bool none_selected = (active == repsp::platform::kPostShaderNoneId);
+        if (ImGui::Selectable(repsp::platform::kPostShaderNoneId, none_selected))
+        {
+            if (ctrl->Select(repsp::platform::kPostShaderNoneId))
+            {
+                settings_.post_shader = repsp::platform::kPostShaderNoneId;
+                Save();
+            }
+        }
+        if (none_selected)
+        {
+            ImGui::SetItemDefaultFocus();
+        }
+        for (const auto& entry : ctrl->catalog())
+        {
+            const bool selected = (active == entry.id);
+            if (ImGui::Selectable(entry.id.c_str(), selected))
+            {
+                if (ctrl->Select(entry.id))
+                {
+                    settings_.post_shader = entry.id;
+                    Save();
+                }
+            }
+            if (selected)
+            {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Reload"))
+    {
+        ctrl->Reload();
+    }
+
+    if (!ctrl->last_error().empty())
+    {
+        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", ctrl->last_error().c_str());
+    }
+
+    auto& params = ctrl->parameters();
+    if (!params.empty())
+    {
+        for (size_t i = 0; i < params.size(); ++i)
+        {
+            auto& param = params[i];
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::SetNextItemWidth(combo_width);
+            const char* label = param.description.empty() ? param.name.c_str() : param.description.c_str();
+            ImGui::SliderFloat(label, &param.value, param.minimum, param.maximum, "%.3f");
+            ImGui::PopID();
+        }
+        if (ImGui::Button("Reset defaults"))
+        {
+            for (auto& param : params)
+            {
+                param.value = param.initial;
+            }
+        }
+    }
+
+    if (!ctrl->shader_directory().empty())
+    {
+        ImGui::TextDisabled("Files: %s (*.glsl / *.glslp)", ctrl->shader_directory().c_str());
     }
 }
 

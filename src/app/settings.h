@@ -22,6 +22,7 @@ struct Settings
     int render_scale = 2; // 1..8
     int msaa = 0;         // 0, 2, 4, 8
     repsp::gpu::TextureFilterMode texture_filter = repsp::gpu::TextureFilterMode::kOriginal;
+    std::string post_shader = "none";
 
     bool show_fps = false;
     bool show_memory = false;

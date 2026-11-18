@@ -51,6 +51,7 @@
 #include <repsp/platform/input.h>
 #include <repsp/platform/path.h>
 #include <repsp/platform/platform.h>
+#include <repsp/platform/post_shader.h>
 #include <repsp/recomp/guest_cpu.h>
 #include <repsp/runtime/exec_history.h>
 #include <repsp/runtime/guest_memory.h>
@@ -81,6 +82,7 @@ void PrintUsage(const char* prog)
               << "  --headless             Run without opening a display window\n"
               << "  --renderer <sw|gl>     Select render backend (default: gl windowed, sw headless)\n"
               << "  --scale <n>            Window scale 1..8, and GL internal scale (default: 2)\n"
+              << "  --post-shader <id>     Select screen shader (none, crt, scanline, fsr, scalefx, anime4k, or file)\n"
               << "  --audio-latency-ms <n> Target host audio buffer depth in ms (default: 20)\n"
               << "  --max-vblanks <n>      Stop execution after <n> VBlanks (0 = unlimited)\n"
               << "  --input-script <path>  Deterministic controller script (<vblank> <button names>)\n"
@@ -586,7 +588,8 @@ int RunBoot(const std::filesystem::path& game_dir,
             const std::filesystem::path& crash_dir,
             bool no_input_record,
             const std::string& debug_crash_kind,
-            bool scale_explicit)
+            bool scale_explicit,
+            const std::string* post_shader_cli)
 {
     std::vector<InputScriptEntry> input_script;
     if (!input_script_path.empty())
@@ -651,6 +654,13 @@ int RunBoot(const std::filesystem::path& game_dir,
     plat_cfg.display.use_opengl = use_gl;
     plat_cfg.display.hidden = headless && use_gl;
     plat_cfg.audio.dummy = headless;
+    const auto shader_dir = repsp::platform::ResolvePostShaderDirectory(repsp::platform::GetExecutableDirectory());
+    const char* env_shader = std::getenv("REDMP1_POST_SHADER");
+    const std::string chosen_shader = repsp::platform::ChoosePostShader(
+        post_shader_cli, env_shader, &settings.post_shader);
+    repsp::platform::SetPostShaderDirectory(shader_dir);
+    repsp::platform::SetInitialPostShader(chosen_shader);
+    std::cout << "[redmp1] Post shader: " << chosen_shader << "\n";
     repsp::platform::SetDisplayTitle("reDMP1 - " + idResult.title);
     if (!repsp::platform::Initialize(plat_cfg) && (!headless || use_gl))
     {
@@ -1170,6 +1180,8 @@ int main(int argc, char* argv[])
     bool renderer_explicit = false;
     int scale = 2;
     bool scale_explicit = false;
+    std::string post_shader_cli;
+    bool has_post_shader_cli = false;
     uint32_t max_vblanks = 0;
     uint32_t audio_latency_ms = 20;
 
@@ -1305,6 +1317,27 @@ int main(int argc, char* argv[])
             scale = static_cast<int>(parsed);
             scale_explicit = true;
         }
+        else if (opt == "--post-shader")
+        {
+            if (i + 1 >= argc || argv[i + 1][0] == '\0')
+            {
+                std::cerr << "Error: --post-shader requires a non-empty shader id.\n";
+                return 1;
+            }
+            post_shader_cli = argv[++i];
+            has_post_shader_cli = true;
+        }
+        else if (opt.rfind("--post-shader=", 0) == 0)
+        {
+            std::string val = opt.substr(14);
+            if (val.empty())
+            {
+                std::cerr << "Error: --post-shader requires a non-empty shader id.\n";
+                return 1;
+            }
+            post_shader_cli = std::move(val);
+            has_post_shader_cli = true;
+        }
         else if (opt == "--max-vblanks")
         {
             if (i + 1 >= argc)
@@ -1388,9 +1421,12 @@ int main(int argc, char* argv[])
                    dialog_answer_yes ? repsp::hle::utility::DialogAnswer::kYes
                                      : repsp::hle::utility::DialogAnswer::kNo,
                    codec_plugin_path, no_codec_plugin, audio_latency_ms,
-                   crash_dir, no_input_record, debug_crash_kind, scale_explicit);
+                   crash_dir, no_input_record, debug_crash_kind, scale_explicit,
+                   has_post_shader_cli ? &post_shader_cli : nullptr);
 #else
     (void)scale_explicit;
+    (void)post_shader_cli;
+    (void)has_post_shader_cli;
     (void)headless;
     (void)use_gl;
     (void)scale;

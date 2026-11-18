@@ -302,6 +302,13 @@ Settings SettingsFile::Load()
                 s.texture_filter = repsp::gpu::TextureFilterMode::kAniso16x;
             }
         }
+        else if (key == "postshader")
+        {
+            if (!val.empty())
+            {
+                s.post_shader = val;
+            }
+        }
         else if (key == "showfps")
         {
             ParseBool(val, &s.show_fps);
@@ -339,6 +346,7 @@ bool SettingsFile::Save(const Settings& settings)
     out << "RenderScale=" << settings.render_scale << "\n";
     out << "MSAA=" << settings.msaa << "\n";
     out << "TextureFilter=" << TexFilterToString(settings.texture_filter) << "\n";
+    out << "PostShader=" << (settings.post_shader.empty() ? "none" : settings.post_shader) << "\n";
     out << "ShowFPS=" << (settings.show_fps ? "true" : "false") << "\n";
     out << "ShowMemory=" << (settings.show_memory ? "true" : "false") << "\n";
     out << "ShowGPUMemory=" << (settings.show_gpu_memory ? "true" : "false") << "\n";
