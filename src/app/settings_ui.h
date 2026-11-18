@@ -65,7 +65,8 @@ private:
     Tracked<bool> fullscreen_;
     Tracked<repsp::platform::AspectMode> aspect_;
     Tracked<repsp::platform::OutputFilter> output_filter_;
-    float tab_height_ = 0.0f;
+    float tab_height_ = 0.0f;  // the tallest tab's content, divided by the OSD scale
+    float menu_width_ = 0.0f;  // this frame's menu width
     bool menu_was_open_ = false;
     int menu_frames_ = 0;
 

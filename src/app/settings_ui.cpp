@@ -240,8 +240,15 @@ void SettingsUi::DrawMenu()
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
                                    viewport->WorkPos.y + viewport->WorkSize.y * 0.5f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    const float width = 560.0f * ImGui::GetStyle().FontScaleMain;
-    ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(width, FLT_MAX));
+    // The menu is 560 (scaled) wide, or narrower when the window is (a 1x
+    // window is 480 wide); its height fits the tallest tab, up to the
+    // window's height, beyond which it scrolls.
+    const float scale = ImGui::GetStyle().FontScaleMain;
+    const float margin = 8.0f * scale;
+    const float width = std::max(1.0f, std::min(560.0f * scale, viewport->WorkSize.x - 2.0f * margin));
+    const float max_height = std::max(1.0f, viewport->WorkSize.y - 2.0f * margin);
+    menu_width_ = width;
+    ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(width, max_height));
     bool open = true;
     if (ImGui::Begin("reDMP1 Settings", &open,
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize))
@@ -276,14 +283,26 @@ void SettingsUi::DrawMenu()
     }
 }
 
+// Every tab is as tall as the tallest seen since the menu opened, so the
+// menu keeps one size whichever tab is open (as in reCT3). Heights are kept
+// divided by the OSD scale, so they still fit after the window changes size.
+// A window's first frames are laid out before it has its width (wrapped text
+// then runs very tall), so they are not measured, nor is any frame narrower
+// than the menu's width.
 void SettingsUi::DrawTab(void (SettingsUi::*draw)())
 {
     const float scale = ImGui::GetStyle().FontScaleMain;
-    ImGui::BeginChild("tab_body", ImVec2(0.0f, tab_height_ * scale), ImGuiChildFlags_AutoResizeY);
+    const float top = ImGui::GetCursorPosY();
     (this->*draw)();
-    const float height = ImGui::GetCursorPosY() / scale;
-    tab_height_ = std::max(tab_height_, height);
-    ImGui::EndChild();
+    const float height = ImGui::GetCursorPosY() - top;
+    if (menu_frames_ >= 2 && ImGui::GetWindowWidth() >= menu_width_ - 1.0f)
+    {
+        tab_height_ = std::max(tab_height_, height / scale);
+    }
+    if (height < tab_height_ * scale)
+    {
+        ImGui::Dummy(ImVec2(0.0f, tab_height_ * scale - height));
+    }
 }
 
 void SettingsUi::DrawInfoTab()
