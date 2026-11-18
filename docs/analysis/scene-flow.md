@@ -35,6 +35,16 @@ flowchart TD
 * **수정 (`patches/psprecomp/0003-jalr-fallthrough.patch`)**:
   * 간접 **비호출**(`in.is_indirect && !in.is_call`, 즉 `jr`)만 종단으로 취급하도록 패치하고 `BOOT.BIN`을 재리프트(`8785 functions, 17215 interior entries, 0.00% VFPU traps`)하여 원인을 해결했습니다.
 
+## 3. 곡 선택 후 아이캐치(곡 표지) 텍스처 적재 특성 (**확인됨**)
+
+* Song Select에서 `CIRCLE`을 누르면 디스크 확대 연출 뒤 전체 화면 곡 표지(아이캐치) 화면을 거쳐 플레이 화면으로 진입한다.
+* 곡 리소스(`all.mp`, `all2.mp`에서 `sceIoOpenAsync` 경로로 비동기 읽기)가 User RAM(`0x08000000..0x0A000000`)에 적재되며, 대형 UI/표지 텍스처는 비-CLUT 형식(`fmt=1` ABGR1555 `512x256` `0x08C4DA60`, `fmt=2` ABGR4444 `512x256` `0x08DC1F50` / `256x256`, `fmt=3` ABGR8888 `512x256` `0x09219110`, 모두 `swz=1`)으로 게스트 User RAM 버퍼에 배치된 뒤 GE로 그려진다.
+* 두 번째 곡을 시작할 때 게스트는 같은 User RAM 버퍼 주소·크기·형식으로 새 곡의 표지를 덮어쓰므로, 호스트 GL 텍스처 캐시가 User RAM 범위의 내용 해시를 계산하지 않으면 첫 번째 곡의 표지가 재사용된다(`repsp` `gl_backend.cpp` `HashGuestRange` 수정으로 해결).
+* **아이캐치 → 플레이 전환 직전 1프레임 버퍼 재사용 (`0x08C4DA60`; reDMP1 실행에서 관측됨, 원본 동작인지는 **미확정**)**:
+  * 아이캐치 진입 시 `0x08C4DA60`(`512x256`, `fmt=1`, `swz=1`, `262144` 바이트)에 표지 이미지를 배치해 `fb=0x04044000`에 그린 뒤 `sceDisplaySetFrameBuf(0x04044000)`로 표시한다.
+  * 이어 곡 로딩 구간(약 80 vblank, `all.mp` 읽기 + 게스트 메모리 관리자 할당/해제) 동안 게스트 CPU 코드가 `0x08C4DA60` 영역을 플레이 화면 UI 텍스처 아틀라스 데이터로 덮어쓴다(`sceIoReadAsync`·`sceDmacMemcpy` 직접 덮어쓰기 아님).
+  * 로딩 완료 직후 플레이 루프의 첫 프레임에서 게스트는 백버퍼(`fb=0x04000000`)를 지운 뒤(`clear` `0x00000000`), 덮어써진 `tex=0x08C4DA60`(`512x256`, `fmt=1`, `rgba0=0xFFFFFFFF`, `tfunc=0`)을 `(0,0)-(479,271)`에 한 번 더 그리고 `sceGeDrawSync(0)` → `sceDisplayWaitVblankStartCB()` → `sceDisplaySetFrameBuf(0x04000000)` 순서로 표시한 다음, 다음 프레임(`fb=0x04044000`)부터 정상 플레이 화면으로 넘어간다. 이 동작은 `--renderer sw`와 `--renderer gl` 모두에서 동일하게 재현된다. 다만 실기와 다른 에뮬레이터에서는 이 전환에 노이즈 프레임이 보이지 않으므로, 위 순서 가운데 하나(메모리 배치, 마지막 그리기의 색·알파, 표시 버퍼 선택 등)가 원본과 다를 수 있다([#44](https://github.com/reexec/reDMP1/issues/44)에서 조사).
+
 ---
 
 # Post-Title Menu Entry and `Instance.cpp:37` Assertion Analysis (`ULKS-46050`, `BOOT.BIN`)
@@ -58,3 +68,13 @@ flowchart TD
   * Returning to `TitleScene::Cleanup` (`0x0880AE40`) left `$sp` and `$fp` 32 bytes too low (`0x09FBF930` instead of `0x09FBF950`), so `0x0880AED0` loaded `0x09D8CFB0` instead of `0x08B97774` from `0($fp)` and passed `0x00000000` into `List::Release(0x08C4D520, 0)` (`0x088485E8`), hitting reset object `0x09B08080` (`m_referenceCount == 0`).
 * **Fix (`patches/psprecomp/0003-jalr-fallthrough.patch`)**:
   * Changed the terminal check to `(in.is_indirect && !in.is_call)` and re-lifted `BOOT.BIN` (`8785 functions, 17215 interior entries, 0.00% VFPU traps`), resolving the crash.
+
+## 3. Post-Selection Song Eyecatch (Jacket) Texture Characteristics (**Confirmed**)
+
+* Pressing `CIRCLE` on Song Select zooms the disc, displays the full-screen song eyecatch (jacket) screen, and transitions into gameplay.
+* Song assets (read asynchronously via `sceIoOpenAsync` from `all.mp` and `all2.mp`) are staged in User RAM (`0x08000000..0x0A000000`). Large UI/eyecatch textures are placed in User RAM buffers in non-CLUT swizzled formats (`fmt=1` ABGR1555 `512x256` at `0x08C4DA60`, `fmt=2` ABGR4444 `512x256` at `0x08DC1F50` / `256x256`, `fmt=3` ABGR8888 `512x256` at `0x09219110`, all `swz=1`) and drawn by the GE.
+* When starting a second song, the guest overwrites the same User RAM texture buffer address/dimensions/format with the new song's eyecatch; if the host GL texture cache fails to hash User RAM ranges, it hits the stale entry and keeps showing the first song's jacket (fixed in `repsp` `gl_backend.cpp` `HashGuestRange`).
+* **One-frame `0x08C4DA60` buffer reuse at eyecatch → gameplay transition (observed in reDMP1 runs; whether the original does this is **unconfirmed**)**:
+  * On entering the eyecatch, the game places the jacket image at `0x08C4DA60` (`512x256`, `fmt=1`, `swz=1`, `262144` bytes), draws it to `fb=0x04044000`, and presents it via `sceDisplaySetFrameBuf(0x04044000)`.
+  * During song loading (~80 vblanks, `all.mp` reads plus guest memory-manager allocations/frees), guest CPU code overwrites `0x08C4DA60` with gameplay UI texture atlas data (not overwritten directly by `sceIoReadAsync` or `sceDmacMemcpy`).
+  * Immediately after loading finishes, on the first transition frame (`fb=0x04000000`), the guest clears `(0,0)-(480,272)` (`rgba0=0x00000000`), then draws the overwritten `tex=0x08C4DA60` (`512x256`, `fmt=1`, `rgba0=0xFFFFFFFF`, `tfunc=0`) over `(0,0)-(479,271)`, calls `sceGeDrawSync(0)` → `sceDisplayWaitVblankStartCB()` → `sceDisplaySetFrameBuf(0x04000000)` to display it for one frame, and switches to normal gameplay rendering on the next frame (`fb=0x04044000`). Both `--renderer sw` and `--renderer gl` reproduce this identically. The real hardware and another emulator show no noise frame at this transition, though, so one step above (memory layout, the colour or alpha of the last draw, the choice of displayed buffer, ...) may differ from the original (investigated in [#44](https://github.com/reexec/reDMP1/issues/44)).
