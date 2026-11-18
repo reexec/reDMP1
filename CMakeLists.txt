@@ -130,10 +130,27 @@ else()
 endif()
 
 # 6. App target: redmp1 (CLI executable: argument parsing, orchestration)
+execute_process(
+    COMMAND "${GIT_EXECUTABLE}" rev-parse --short HEAD
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    OUTPUT_VARIABLE REDMP1_GIT_COMMIT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(NOT REDMP1_GIT_COMMIT)
+    set(REDMP1_GIT_COMMIT "unknown")
+endif()
+
 add_executable(redmp1
     src/app/main.cpp
+    src/app/settings.cpp
+    src/app/settings_ui.cpp
 )
-target_compile_definitions(redmp1 PRIVATE REDMP1_VERSION="${REDMP1_VERSION_STRING}")
+target_compile_definitions(redmp1 PRIVATE
+    REDMP1_VERSION="${REDMP1_VERSION_STRING}"
+    REDMP1_BUILD_CONFIG="$<CONFIG>"
+    REDMP1_GIT_COMMIT="${REDMP1_GIT_COMMIT}"
+)
 if(REDMP1_HAVE_RECOMP)
     target_compile_definitions(redmp1 PRIVATE REDMP1_HAVE_RECOMP=1)
     if(REDMP1_TRACE_GUEST)
@@ -202,6 +219,18 @@ target_link_libraries(recomp_abi_probe PRIVATE
 )
 repsp_apply_host_flags(recomp_abi_probe)
 add_test(NAME recomp_abi_probe COMMAND $<TARGET_FILE:recomp_abi_probe>)
+
+# redmp1_settings_probe (settings file round-trip, malformed values, fallback)
+add_executable(redmp1_settings_probe
+    src/app/settings_probe.cpp
+    src/app/settings.cpp
+)
+target_link_libraries(redmp1_settings_probe PRIVATE
+    repsp::gpu
+    repsp::platform
+)
+repsp_apply_host_flags(redmp1_settings_probe)
+add_test(NAME redmp1_settings_probe COMMAND $<TARGET_FILE:redmp1_settings_probe>)
 
 # 5. CTest and Smoke Tests
 enable_testing()

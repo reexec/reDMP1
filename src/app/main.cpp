@@ -43,6 +43,10 @@
 #include <repsp/hle/sascore.h>
 #include <repsp/hle/utility.h>
 #include <repsp/platform/crash_handler.h>
+#include <repsp/platform/display.h>
+#include <repsp/platform/overlay.h>
+#include "settings.h"
+#include "settings_ui.h"
 #include <repsp/platform/guarded_run.h>
 #include <repsp/platform/input.h>
 #include <repsp/platform/path.h>
@@ -581,7 +585,8 @@ int RunBoot(const std::filesystem::path& game_dir,
             uint32_t audio_latency_ms,
             const std::filesystem::path& crash_dir,
             bool no_input_record,
-            const std::string& debug_crash_kind)
+            const std::string& debug_crash_kind,
+            bool scale_explicit)
 {
     std::vector<InputScriptEntry> input_script;
     if (!input_script_path.empty())
@@ -628,15 +633,25 @@ int RunBoot(const std::filesystem::path& game_dir,
     std::error_code ec;
     std::filesystem::create_directories(ms0_dir, ec);
 
+    redmp1::SettingsFile settings_file;
+    const redmp1::Settings settings = settings_file.Load();
+    const int effective_win_scale = scale_explicit ? std::clamp(scale, 1, 6) : settings.window_scale;
+    const int effective_render_scale = scale_explicit ? scale : settings.render_scale;
+
     repsp::platform::PlatformConfig plat_cfg;
     plat_cfg.headless = headless && !use_gl;
-    plat_cfg.display.width = 480 * scale;
-    plat_cfg.display.height = 272 * scale;
-    plat_cfg.display.title = "reDMP1 - DJMAX Portable";
+    plat_cfg.display.width = 480 * effective_win_scale;
+    plat_cfg.display.height = 272 * effective_win_scale;
+    plat_cfg.display.title = "reDMP1 - " + idResult.title;
+    plat_cfg.display.fullscreen = !headless && settings.fullscreen;
+    plat_cfg.display.vsync_mode = settings.vsync;
+    plat_cfg.display.aspect_mode = settings.aspect;
+    plat_cfg.display.output_filter = settings.output_filter;
     plat_cfg.display.dummy = headless && !use_gl;
     plat_cfg.display.use_opengl = use_gl;
     plat_cfg.display.hidden = headless && use_gl;
     plat_cfg.audio.dummy = headless;
+    repsp::platform::SetDisplayTitle("reDMP1 - " + idResult.title);
     if (!repsp::platform::Initialize(plat_cfg) && (!headless || use_gl))
     {
         if (use_gl)
@@ -677,15 +692,53 @@ int RunBoot(const std::filesystem::path& game_dir,
 
     repsp::hle::display::DisplayHleConfig disp_cfg;
     disp_cfg.headless = headless;
-    disp_cfg.scale = scale;
+    disp_cfg.scale = effective_win_scale;
     disp_cfg.use_opengl = use_gl;
-    disp_cfg.internal_scale = use_gl ? scale : 1;
-    disp_cfg.window_title = "reDMP1 - DJMAX Portable";
+    disp_cfg.internal_scale = use_gl ? effective_render_scale : 1;
+    disp_cfg.window_title = "reDMP1 - " + idResult.title;
     repsp::hle::display::Register(disp_cfg);
     if (use_gl && repsp::gpu::GetRenderBackend() != &repsp::gpu::kOpenGlBackend)
     {
         std::cerr << "[redmp1] OpenGL backend selection failed; using software renderer.\n";
         use_gl = false;
+    }
+
+    std::unique_ptr<redmp1::SettingsUi> settings_ui;
+    if (use_gl && !headless)
+    {
+        repsp::gpu::SetMsaaSamples(settings.msaa);
+        repsp::gpu::SetTextureFilterMode(settings.texture_filter);
+        repsp::platform::SetRenderScaleCallback([](int new_scale)
+        {
+            repsp::gpu::SetInternalScale(new_scale);
+        });
+        redmp1::BuildInfo build_info;
+        build_info.version = REDMP1_VERSION;
+        build_info.build_time = __DATE__ " " __TIME__;
+#if defined(_WIN32)
+#if defined(_M_X64) || defined(__x86_64__)
+        build_info.identity = std::string("Windows x64 / ") + REDMP1_BUILD_CONFIG;
+#else
+        build_info.identity = std::string("Windows x86 / ") + REDMP1_BUILD_CONFIG;
+#endif
+#else
+#if defined(__x86_64__)
+        build_info.identity = std::string("Linux x64 / ") + REDMP1_BUILD_CONFIG;
+#else
+        build_info.identity = std::string("Linux x86 / ") + REDMP1_BUILD_CONFIG;
+#endif
+#endif
+        build_info.commit = REDMP1_GIT_COMMIT;
+        build_info.game_id = idResult.disc_id;
+        build_info.game_title = idResult.title;
+        settings_ui = std::make_unique<redmp1::SettingsUi>(std::move(build_info), settings, &settings_file);
+        repsp::platform::SetOverlayBuilder([&settings_ui]()
+        {
+            if (settings_ui)
+            {
+                settings_ui->Build();
+            }
+        });
     }
     repsp::hle::ctrl::Register();
     if (!input_script.empty())
@@ -844,6 +897,8 @@ int RunBoot(const std::filesystem::path& game_dir,
         repsp::hle::ctrl::Shutdown();
         repsp::hle::dmac::Shutdown();
         repsp::hle::display::Shutdown();
+        repsp::platform::SetOverlayBuilder(nullptr);
+        repsp::platform::SetRenderScaleCallback(nullptr);
         repsp::platform::Shutdown();
         return 1;
     }
@@ -954,6 +1009,8 @@ int RunBoot(const std::filesystem::path& game_dir,
     repsp::platform::SetCrashReportExtra(nullptr, nullptr);
     repsp::platform::UninstallCrashHandler();
     PruneCrashBaseDirectory(crash_base_dir, crash_run_dir);
+    repsp::platform::SetOverlayBuilder(nullptr);
+    repsp::platform::SetRenderScaleCallback(nullptr);
     repsp::platform::Shutdown();
     codec_plugin.reset();
 
@@ -1112,6 +1169,7 @@ int main(int argc, char* argv[])
     bool use_gl = false;
     bool renderer_explicit = false;
     int scale = 2;
+    bool scale_explicit = false;
     uint32_t max_vblanks = 0;
     uint32_t audio_latency_ms = 20;
 
@@ -1245,6 +1303,7 @@ int main(int argc, char* argv[])
                 return 1;
             }
             scale = static_cast<int>(parsed);
+            scale_explicit = true;
         }
         else if (opt == "--max-vblanks")
         {
@@ -1329,8 +1388,9 @@ int main(int argc, char* argv[])
                    dialog_answer_yes ? repsp::hle::utility::DialogAnswer::kYes
                                      : repsp::hle::utility::DialogAnswer::kNo,
                    codec_plugin_path, no_codec_plugin, audio_latency_ms,
-                   crash_dir, no_input_record, debug_crash_kind);
+                   crash_dir, no_input_record, debug_crash_kind, scale_explicit);
 #else
+    (void)scale_explicit;
     (void)headless;
     (void)use_gl;
     (void)scale;
