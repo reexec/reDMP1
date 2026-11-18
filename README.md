@@ -105,6 +105,16 @@ python scripts/recomp/regenerate.py roms
 .\build\win64-debug\Debug\redmp1.exe roms
 ```
 
+### 단축키, 내부 설정 메뉴, `redmp1.ini`
+
+* **단축키**
+  * `Tab` 또는 게임패드 `LB+RB+Y`: 내부 설정 메뉴(OpenGL 렌더러 전용) 열기/닫기. 메뉴가 열린 동안 게임 입력은 차단됩니다.
+  * `Alt+1..6`: 창 크기를 `480x272`의 1~6배로 조절 (전체화면·최대화 해제 후 적용)
+  * `Alt+Enter` 또는 창 더블클릭(메뉴 창 밖): 데스크톱 해상도 테두리 없는 전체화면 토글
+  * `Ctrl+1..8`: OpenGL 내부 렌더링 해상도(1x~8x) 변경
+* **내부 설정 메뉴**: `Info`(빌드·게임·OpenGL·메모리 정보), `Graphics`(렌더링 배율·창 크기·전체화면·VSync·화면 비율·출력 필터·MSAA·텍스처 필터링·통계 창 표시 항목), `Input`(키보드·게임패드 매핑표 및 단축키 안내)와 드래그 가능한 통계 그래프 창(FPS, 메모리, GPU 메모리)을 제공합니다.
+* **설정 파일 (`redmp1.ini`)**: 실행 파일 옆에 저장하며, 해당 폴더에 쓸 수 없으면 사용자 데이터 폴더(`GetUserDataDirectory("redmp1")`)에 저장합니다. `--scale`, `--renderer` 등 명령줄 옵션이 파일보다 우선하며, 명령줄로 지정한 값은 해당 실행에만 적용되고 파일에 덮어쓰지 않습니다.
+
 ---
 
 ## 플랫폼 지원 현황
@@ -166,6 +176,16 @@ ctest --test-dir build/linux-x64-debug --output-on-failure
 1. Register disc: `python scripts/recomp/register_disc.py roms`
 2. Generate lifted C: `python scripts/recomp/regenerate.py roms`
 3. Run identifier: `./build/win64-debug/Debug/redmp1 roms`
+
+### Shortcuts, In-Game Menu, and `redmp1.ini`
+
+* **Shortcuts**
+  * `Tab` or gamepad `LB+RB+Y`: Toggle the Dear ImGui settings menu (OpenGL renderer only). Game input is withheld while open.
+  * `Alt+1..6`: Resize the window to 1x..6x of `480x272` (leaves fullscreen/maximized first).
+  * `Alt+Enter` or double-click outside menu windows: Toggle borderless desktop-resolution fullscreen.
+  * `Ctrl+1..8`: Set the OpenGL internal rendering scale (1x..8x).
+* **In-Game Menu**: `Info` (build, game ID/title, OpenGL, memory), `Graphics` (render scale, window scale, fullscreen, VSync, aspect ratio, output filter, MSAA, texture filtering, stats toggles), `Input` (keyboard/gamepad mapping and shortcut reference), plus a draggable stats overlay (0.5 s binned FPS, process memory, GPU memory).
+* **Settings File (`redmp1.ini`)**: Saved next to the executable, falling back to the user data directory if not writable. Command-line options (`--scale`, `--renderer`, etc.) override the file for that run without overwriting it.
 
 ## License & Trademark Notice
 
