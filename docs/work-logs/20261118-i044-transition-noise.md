@@ -41,6 +41,43 @@
   * Win64 Ninja Release **35/35 통과**, Win64 Ninja Debug **35/35 통과**.
   * Visual Studio 18 2026 생성기 및 Linux x64(WSL) 검증 상태는 보고에 별도 기록한다.
 
+## 4. 후속: 곡 선택 미리듣기 끊김 수정 (`#44b`)
+
+### 4.1 재현 및 경로 확인
+
+* 곡 선택 화면에 머무는 입력 스크립트(`%TEMP%\redmp1-build\i044b-song-select.txt`: `500 START`, `750 START`, `1000 START`, `1250 CIRCLE` 후 2600 vblank까지 대기)로 창 모드(`--renderer gl --max-vblanks 2600`) 및 `REPSP_AUDIO_DUMP`를 수집했다.
+* 미리듣기는 **`sceAtrac` 스트리밍 → `sceAudio` `ch1` (`samples=1024, stereo`)** 경로로 출력된다(선택적 FFmpeg 플러그인 없이 `ATRAC decode: silent` 환경에서도 `ch1` underrun/shortfall, `ch1` 호출 수, `ATRAC frames`, `streamAdded`가 스트리밍 기아를 직접 드러낸다).
+
+### 4.2 `repsp` 이분 탐색 결과 (동일 스크립트, 창 모드 `--renderer gl --max-vblanks 2600`)
+
+| repsp 리비전 | Present (mean) | ch1 calls / frames | ch1 ur (short) | ch2 ur (short) | ATRAC frames / streamAdded |
+| --- | --- | --- | --- | --- | --- |
+| `782a4b4` (v0.0.19) | 1578 (27.48 ms) | 1097 / 1,315,840 | 71 (9,088) | 1184 (151,552) | 909 / 327,840 |
+| `46dcaef` (v0.0.20) | 1580 (27.45 ms) | 1094 / 1,312,768 | 68 (8,704) | 105 (13,440) | 907 / 327,840 |
+| `b3ca15a` (v0.0.21) | 1574 (27.56 ms) | 844 / 1,056,768 | **1985 (254,080)** | 129 (16,512) | **656 / 229,152** |
+| `c293665` (#44 GE stall) | 1585 (27.37 ms) | 856 / 1,069,056 | **1981 (253,568)** | 814 (104,192) | **668 / 229,152** |
+
+* 원인은 `46dcaef` → `b3ca15a`(`GL texture cache hashes textures in user RAM`) 단일 커밋이었다.
+* `b3ca15a` 이후 `ResolveTextureLocked()`(`third_party/repsp/src/gpu/gl_backend.cpp`)가 모든 `GlDraw` 호출마다 User RAM 텍스처 전체를 **1바이트 단위 FNV-1a(`HashBytes`)** 로 매번 다시 해시해, 한 디스플레이 리스트에서 같은 텍스처를 여러 번 그릴 때도 게스트 CPU 시간을 과도하게 소모하며 `stream_sound_poll_thread`(`ch1`)가 제때 실행되지 못했다.
+
+### 4.3 수정 및 합성 프로브
+
+* **`third_party/repsp/src/gpu/gl_backend.cpp`**:
+  * `HashBytes`를 4레인 64비트 워드(`std::memcpy`, 32바이트 청크 + 8바이트/1바이트 꼬리 + SplitMix64 마무리) 해시로 교체했다.
+  * `GuestTexEntry`에 `clut_hash`와 `verified_epoch`를 두고 `FlushPendingLocked()`마다 `g_gl.flush_epoch`를 증가시켜, 같은 GE flush 내 반복 그리기는 CLUT만 확인하고 User RAM 텍스처 본문 재해시를 건너뛰되 다음 flush/프레임에서는 다시 해시해 `#43`(곡 표지 덮어쓰기)과 `#44`(GE stall) 동작을 보존했다.
+* **`third_party/repsp/include/repsp/gpu/render_backend.h` & `tools/gl_probe/main.cpp`**:
+  * `OpenGlStats::texture_bytes_hashed`를 추가하고, 512x512 RGBA8888(1 MiB) User RAM 텍스처를 한 flush 내에서 32회 그릴 때 `texture_bytes_hashed == 1 MiB`(수정 전에는 32 MiB로 실패), 다음 flush에서 덮어쓰기 후 그리면 `2 MiB` 및 새 색상 반영을 검증하는 결정적 합성 프로브를 추가했다.
+
+### 4.4 수정 전후 창 모드 측정 및 CTest
+
+* **수정 전 (`c293665`, 창 모드 `--renderer gl --max-vblanks 2600`, 2회)**:
+  * 1회: `Present=1585 (mean=27.36 ms)`, `AUDIO_UR=2795`, `ch1 ur=1981 (short=253568)`, `ch2 ur=814 (short=104192)`, `ATRAC frames=668, streamAdded=229152`
+  * 2회: `Present=1585 (mean=27.37 ms)`, `AUDIO_UR=2874`, `ch1 ur=1968 (short=251904)`, `ch2 ur=906 (short=115968)`, `ATRAC frames=681, streamAdded=229152`
+* **수정 후 (창 모드 `--renderer gl --max-vblanks 2600`, 2회)**:
+  * 1회: `Present=2196 (mean=19.75 ms)`, `AUDIO_UR=102`, **`ch1 ur=68 (short=8704)`**, **`ch2 ur=34 (short=4352)`**, `ATRAC frames=924, streamAdded=327840`
+  * 2회: `Present=2194 (mean=19.77 ms)`, `AUDIO_UR=102`, **`ch1 ur=68 (short=8704)`**, **`ch2 ur=34 (short=4352)`**, `ATRAC frames=923, streamAdded=327840`
+* **CTest**: Win64 Ninja Release **35/35 통과**, Win64 Ninja Debug **35/35 통과**.
+
 ---
 
 # 2026-11-18 Work Log: Jacket-to-Gameplay Transition Noise Fix (#44)
@@ -85,3 +122,40 @@ Work order: [20261118-i044-transition-noise.md](../work-orders/20261118-i044-tra
 * **Builds & CTest**:
   * Win64 Ninja Release **35/35 passed**, Win64 Ninja Debug **35/35 passed**.
   * Visual Studio 18 2026 generator and Linux x64 (WSL) status are recorded in the report.
+
+## 4. Follow-up: Song Select Preview Stutter Fix (`#44b`)
+
+### 4.1 Reproduction & Audio Path
+
+* Captured windowed-mode runs (`--renderer gl --max-vblanks 2600`) with `REPSP_AUDIO_DUMP` using `%TEMP%\redmp1-build\i044b-song-select.txt` (`500 START`, `750 START`, `1000 START`, `1250 CIRCLE`, then idle on Song Select).
+* Preview music plays via **`sceAtrac` streaming -> `sceAudio` `ch1` (`samples=1024, stereo`)**. Even without the optional FFmpeg codec plugin (`ATRAC decode: silent`), `ch1` underrun/shortfall, `ch1` call counts, `ATRAC frames`, and `streamAdded` directly measure streaming starvation.
+
+### 4.2 `repsp` Bisect (Same Script, Windowed `--renderer gl --max-vblanks 2600`)
+
+| repsp revision | Present (mean) | ch1 calls / frames | ch1 ur (short) | ch2 ur (short) | ATRAC frames / streamAdded |
+| --- | --- | --- | --- | --- | --- |
+| `782a4b4` (v0.0.19) | 1578 (27.48 ms) | 1097 / 1,315,840 | 71 (9,088) | 1184 (151,552) | 909 / 327,840 |
+| `46dcaef` (v0.0.20) | 1580 (27.45 ms) | 1094 / 1,312,768 | 68 (8,704) | 105 (13,440) | 907 / 327,840 |
+| `b3ca15a` (v0.0.21) | 1574 (27.56 ms) | 844 / 1,056,768 | **1985 (254,080)** | 129 (16,512) | **656 / 229,152** |
+| `c293665` (#44 GE stall) | 1585 (27.37 ms) | 856 / 1,069,056 | **1981 (253,568)** | 814 (104,192) | **668 / 229,152** |
+
+* The regression is isolated to `b3ca15a` (`GL texture cache hashes textures in user RAM`).
+* After `b3ca15a`, `ResolveTextureLocked()` (`third_party/repsp/src/gpu/gl_backend.cpp`) ran a **byte-by-byte FNV-1a hash (`HashBytes`)** over the entire User RAM texture on every single `GlDraw` call, even when the same texture was drawn repeatedly within one display list, starving `stream_sound_poll_thread` (`ch1`).
+
+### 4.3 Fix & Synthetic Probe
+
+* **`third_party/repsp/src/gpu/gl_backend.cpp`**:
+  * Replaced byte-by-byte FNV-1a in `HashBytes` with a 4-lane 64-bit word hash (`std::memcpy`, 32-byte chunks + 8-byte/1-byte tail + SplitMix64 finalizer).
+  * Added `clut_hash` and `verified_epoch` to `GuestTexEntry`, advancing `g_gl.flush_epoch` in `FlushPendingLocked()`, so repeated draws of the same `TextureKey` within one GE flush only check `clut_hash` and skip re-hashing User RAM texture bytes while still re-hashing on subsequent flushes/frames (preserving `#43` jacket overwrite detection and `#44` GE stall fix).
+* **`third_party/repsp/include/repsp/gpu/render_backend.h` & `tools/gl_probe/main.cpp`**:
+  * Added `OpenGlStats::texture_bytes_hashed` and a deterministic probe that draws a 512x512 RGBA8888 (1 MiB) User RAM texture 32 times in one flush (asserting `texture_bytes_hashed == 1 MiB`, failing before the fix with `32 MiB`) and verifies overwrite detection on the next flush (`2 MiB`).
+
+### 4.4 Before/After Windowed Measurements & CTest
+
+* **Before fix (`c293665`, windowed `--renderer gl --max-vblanks 2600`, 2 runs)**:
+  * Run 1: `Present=1585 (mean=27.36 ms)`, `AUDIO_UR=2795`, `ch1 ur=1981 (short=253568)`, `ch2 ur=814 (short=104192)`, `ATRAC frames=668, streamAdded=229152`
+  * Run 2: `Present=1585 (mean=27.37 ms)`, `AUDIO_UR=2874`, `ch1 ur=1968 (short=251904)`, `ch2 ur=906 (short=115968)`, `ATRAC frames=681, streamAdded=229152`
+* **After fix (windowed `--renderer gl --max-vblanks 2600`, 2 runs)**:
+  * Run 1: `Present=2196 (mean=19.75 ms)`, `AUDIO_UR=102`, **`ch1 ur=68 (short=8704)`**, **`ch2 ur=34 (short=4352)`**, `ATRAC frames=924, streamAdded=327840`
+  * Run 2: `Present=2194 (mean=19.77 ms)`, `AUDIO_UR=102`, **`ch1 ur=68 (short=8704)`**, **`ch2 ur=34 (short=4352)`**, `ATRAC frames=923, streamAdded=327840`
+* **CTest**: Win64 Ninja Release **35/35 passed**, Win64 Ninja Debug **35/35 passed**.
