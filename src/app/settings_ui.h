@@ -54,6 +54,7 @@ private:
     void DrawTab(void (SettingsUi::*draw)());
     void DrawInfoTab();
     void DrawGraphicsTab();
+    void DrawPostShaderSection(float combo_width);
     void DrawInputTab();
     void DrawStatsWindow();
 

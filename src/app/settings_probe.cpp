@@ -1,5 +1,7 @@
 #include "settings.h"
 
+#include "repsp/platform/post_shader_catalog.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -40,6 +42,7 @@ int main()
         s.render_scale = 6;
         s.msaa = 4;
         s.texture_filter = repsp::gpu::TextureFilterMode::kAniso8x;
+        s.post_shader = "crt";
         s.show_fps = true;
         s.show_memory = true;
         s.show_gpu_memory = true;
@@ -56,6 +59,7 @@ int main()
         PROBE_ASSERT(loaded.render_scale == 6);
         PROBE_ASSERT(loaded.msaa == 4);
         PROBE_ASSERT(loaded.texture_filter == repsp::gpu::TextureFilterMode::kAniso8x);
+        PROBE_ASSERT(loaded.post_shader == "crt");
         PROBE_ASSERT(loaded.show_fps == true);
         PROBE_ASSERT(loaded.show_memory == true);
         PROBE_ASSERT(loaded.show_gpu_memory == true);
@@ -109,6 +113,30 @@ int main()
         PROBE_ASSERT(std::filesystem::exists(fb_ini, ec));
         const redmp1::Settings loaded = file.Load();
         PROBE_ASSERT(loaded.window_scale == 3);
+    }
+
+    // 4. Empty PostShader= preserves default "none" and ChoosePostShader precedence
+    {
+        const auto empty_shader_ini = base / "empty_shader" / "redmp1.ini";
+        std::filesystem::create_directories(empty_shader_ini.parent_path(), ec);
+        {
+            std::ofstream out(empty_shader_ini, std::ios::binary | std::ios::trunc);
+            out << "[Graphics]\nPostShader=\n";
+        }
+        redmp1::SettingsFile file(empty_shader_ini, fallback);
+        const redmp1::Settings loaded = file.Load();
+        PROBE_ASSERT(loaded.post_shader == "none");
+
+        const std::string cli = "fsr";
+        const std::string ini = "crt";
+        const std::string empty;
+        PROBE_ASSERT(repsp::platform::ChoosePostShader(&cli, "scanline", &ini) == "fsr");
+        PROBE_ASSERT(repsp::platform::ChoosePostShader(nullptr, "scanline", &ini) == "scanline");
+        PROBE_ASSERT(repsp::platform::ChoosePostShader(&empty, "scanline", &ini) == "scanline");
+        PROBE_ASSERT(repsp::platform::ChoosePostShader(nullptr, "", &ini) == "crt");
+        PROBE_ASSERT(repsp::platform::ChoosePostShader(nullptr, nullptr, &ini) == "crt");
+        PROBE_ASSERT(repsp::platform::ChoosePostShader(nullptr, nullptr, &empty) == "none");
+        PROBE_ASSERT(repsp::platform::ChoosePostShader(nullptr, nullptr, nullptr) == "none");
     }
 
     std::filesystem::remove_all(base, ec);
