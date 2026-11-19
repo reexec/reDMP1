@@ -75,6 +75,16 @@ static repsp_guest_cpu_ops s_cpu_ops = {
     .set_fpr = cpu_set_fpr,
 };
 
+static uint32_t s_loop_poll_counter = 0;
+
+void psp_loop_hook(uint32_t addr) {
+    (void)addr;
+    if ((++s_loop_poll_counter & 1023u) == 0u) {
+        repsp_recomp_poll();
+    }
+}
+
 void recomp_abi_init(void) {
+    s_loop_poll_counter = 0;
     repsp_recomp_register_cpu(&s_cpu_ops);
 }

@@ -9,6 +9,7 @@ if(REDMP1_RECOMP_SRCS)
     target_link_libraries(redmp1_recomp PUBLIC
         redmp1_recomp_abi
     )
+    target_compile_definitions(redmp1_recomp PRIVATE PSPRECOMP_LOOP_HOOK)
     if(REDMP1_TRACE_GUEST)
         target_compile_definitions(redmp1_recomp PRIVATE PSPRECOMP_TRACE)
     endif()
