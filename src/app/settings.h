@@ -29,6 +29,8 @@ struct Settings
     bool show_gpu_memory = false;
     float stats_x = -1.0f;
     float stats_y = -1.0f;
+
+    int music_offset_ms = 0; // -300..300
 };
 
 // Reads and writes redmp1.ini next to the executable, falling back to the

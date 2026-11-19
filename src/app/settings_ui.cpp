@@ -1,5 +1,6 @@
 #include "settings_ui.h"
 
+#include "repsp/hle/atrac.h"
 #include "repsp/platform/overlay.h"
 #include "repsp/platform/post_shader.h"
 
@@ -267,6 +268,11 @@ void SettingsUi::DrawMenu()
             if (ImGui::BeginTabItem("Graphics"))
             {
                 DrawTab(&SettingsUi::DrawGraphicsTab);
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Audio"))
+            {
+                DrawTab(&SettingsUi::DrawAudioTab);
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Input"))
@@ -690,6 +696,27 @@ void SettingsUi::DrawPostShaderSection(float combo_width)
     {
         ImGui::TextDisabled("Files: %s (*.glsl / *.glslp)", ctrl->shader_directory().c_str());
     }
+}
+
+void SettingsUi::DrawAudioTab()
+{
+    ImGui::SeparatorText("Music Timing");
+    const float scale = ImGui::GetStyle().FontScaleMain;
+    const float slider_width = std::min(280.0f * scale, ImGui::GetContentRegionAvail().x * 0.65f);
+    ImGui::SetNextItemWidth(slider_width);
+    int offset_ms = settings_.music_offset_ms;
+    if (ImGui::SliderInt("Music offset (ms)", &offset_ms, -300, 300, "%d ms"))
+    {
+        offset_ms = (offset_ms >= 0) ? ((offset_ms + 2) / 5) * 5 : ((offset_ms - 2) / 5) * 5;
+        offset_ms = std::clamp(offset_ms, -300, 300);
+        if (offset_ms != settings_.music_offset_ms)
+        {
+            settings_.music_offset_ms = offset_ms;
+            repsp::hle::atrac::SetStartOffsetMs(static_cast<int32_t>(offset_ms));
+            Save();
+        }
+    }
+    ImGui::TextWrapped("Positive values advance music; negative values delay it. Takes effect on the next track.");
 }
 
 void SettingsUi::DrawInputTab()
