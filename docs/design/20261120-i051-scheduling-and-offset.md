@@ -53,22 +53,23 @@
 * 비용: 되돌이마다 증가 하나와 비교 하나. 표시 간격과 미발견 주소 dispatch로 확인한다.
 
 ### 2.3 repsp #55와 #51: 음악 오프셋
-* **repsp**: `repsp::hle::atrac::SetStartOffsetMs(uint32_t)`(기본 0)를 넣는다.
-  * 트랙을 열 때 `raw_pos = delay + offset × sample_rate / 1000`(끝을 넘지 않게)로 둔다.
+* **repsp**: `repsp::hle::atrac::SetStartOffsetMs(int32_t)`(기본 0, 음수 허용)를 넣는다.
+  * 양수: 트랙을 열 때 `raw_pos = delay + offset × sample_rate / 1000`(끝을 넘지 않게)로 둔다. 음악이 그만큼 앞당겨진다.
+  * 음수: 트랙 앞에 `|offset| × sample_rate / 1000`개의 무음 샘플을 이월 버퍼에 채운다. 음악이 그만큼 늦어진다. 블록 크기(1024)는 그대로다.
   * 루프와 Reset 계열에는 적용하지 않는다.
   * 게임 정보는 넣지 않는다.
 * **reDMP1**:
-  * 메뉴에 **Audio** 탭을 넣고, 그 안에 "Music offset (ms)" 슬라이더(0~300, 5 단위)를 둔다.
-  * 설명을 한 줄 단다: 음악을 이만큼 앞당긴다. 다음 곡부터 적용된다.
-  * `redmp1.ini`의 `MusicOffsetMs`(기본 0)에 저장한다.
+  * 메뉴에 **Audio** 탭을 넣고, 그 안에 "Music offset (ms)" 슬라이더(−300~+300, 5 단위)를 둔다. 사용자 요청(2026-11-20): 플레이 환경에 따라 양쪽으로 조절한다.
+  * 설명을 한 줄 단다: 양수는 음악을 앞당기고, 음수는 늦춘다. 다음 곡부터 적용된다.
+  * `redmp1.ini`의 `MusicOffsetMs`(기본 0, 범위 밖이면 기본값)에 저장한다.
   * 시작 로그에 값을 적는다.
 
 ## 3. 검증
 
 1. **probe**:
-   * `atrac_probe`: 오프셋 0과 1000 ms에서 첫 샘플 위치. 루프와 Reset에는 오프셋이 들지 않는다.
+   * `atrac_probe`: 오프셋 0, +1000 ms, −1000 ms에서 첫 샘플 위치(음수는 앞쪽 무음 수와 그 뒤 첫 샘플). 블록 크기가 유지된다. 루프와 Reset에는 오프셋이 들지 않는다.
    * `gl_probe` 또는 새 probe: 잠금을 다른 스레드가 쥔 동안, 게스트 스레드의 잠금 대기가 호스트 대기로 바뀌어 다른 게스트 스레드가 돈다. 결정적으로 만든다. 스레드 타이밍에 기대지 않고, 시험용 훅이나 동기화로 순서를 정한다.
-   * reDMP1 `redmp1_settings_probe`: `MusicOffsetMs` 왕복과 잘못된 값.
+   * reDMP1 `redmp1_settings_probe`: `MusicOffsetMs` 왕복(음수 포함)과 잘못된 값·범위 밖 값.
 2. **게임**(창 모드, 같은 입력 스크립트 3회):
    * 미발견 주소 dispatch 0, 크래시 0
    * 곡 중간 끊김 0
@@ -143,22 +144,23 @@ Previous designs: [20261119-i051](20261119-i051-music-latency.md) and [20261120-
 * Cost: one increment and one compare per back-edge, checked against the present interval and unresolved-address dispatches.
 
 ### 2.3 repsp #55 and #51: music offset
-* **repsp**: add `repsp::hle::atrac::SetStartOffsetMs(uint32_t)` (default 0).
-  * When a track is opened, `raw_pos = delay + offset × sample_rate / 1000`, capped at the end.
+* **repsp**: add `repsp::hle::atrac::SetStartOffsetMs(int32_t)` (default 0; negative allowed).
+  * Positive: when a track is opened, `raw_pos = delay + offset × sample_rate / 1000`, capped at the end. The music starts that much earlier.
+  * Negative: `|offset| × sample_rate / 1000` silent samples are put in the carry buffer ahead of the track. The music starts that much later. The block size (1024) stays.
   * Loops and the reset functions are not affected.
   * No game information goes in.
 * **reDMP1**:
-  * an **Audio** tab in the menu, with a "Music offset (ms)" slider (0-300 in steps of 5);
-  * a one-line note under it: the music starts this much earlier, from the next track;
-  * saved as `MusicOffsetMs` in `redmp1.ini` (default 0);
+  * an **Audio** tab in the menu, with a "Music offset (ms)" slider (−300 to +300 in steps of 5). User request (2026-11-20): adjust either way to suit the playing setup;
+  * a one-line note under it: positive starts the music earlier, negative later, from the next track;
+  * saved as `MusicOffsetMs` in `redmp1.ini` (default 0; out-of-range values keep the default);
   * the startup log names the value.
 
 ## 3. Verification
 
 1. **Probes**:
-   * `atrac_probe`: the first sample position at offsets 0 and 1000 ms. Loops and resets carry no offset.
+   * `atrac_probe`: the first sample position at offsets 0, +1000 and −1000 ms (for negative, the leading silence count and the first sample after it), with the block size kept. Loops and resets carry no offset.
    * `gl_probe` or a new probe: while another thread holds the lock, a guest thread's lock wait becomes a host wait and another guest thread runs. Make it deterministic: no reliance on thread timing, with the order set by test hooks or synchronisation.
-   * reDMP1 `redmp1_settings_probe`: `MusicOffsetMs` round trip and bad values.
+   * reDMP1 `redmp1_settings_probe`: `MusicOffsetMs` round trip (negative included) and bad or out-of-range values.
 2. **Game** (windowed, the same input script, three runs):
    * no unresolved-address dispatches, no crashes;
    * no mid-song underruns;
