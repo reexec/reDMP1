@@ -206,13 +206,26 @@ Settings SettingsFile::Load()
             continue;
         }
         const size_t eq = line.find('=');
-        if (eq == std::string::npos || section != "graphics")
+        if (eq == std::string::npos)
         {
             continue;
         }
         const std::string key = Lower(Trim(line.substr(0, eq)));
         const std::string val = Trim(line.substr(eq + 1));
         const std::string lval = Lower(val);
+
+        if (section == "audio")
+        {
+            if (key == "musicoffsetms")
+            {
+                ParseIntRange(val, -300, 300, &s.music_offset_ms);
+            }
+            continue;
+        }
+        if (section != "graphics")
+        {
+            continue;
+        }
 
         if (key == "windowscale")
         {
@@ -356,6 +369,8 @@ bool SettingsFile::Save(const Settings& settings)
         std::snprintf(buf, sizeof(buf), "StatsX=%.4f\nStatsY=%.4f\n", settings.stats_x, settings.stats_y);
         out << buf;
     }
+    out << "\n[Audio]\n";
+    out << "MusicOffsetMs=" << settings.music_offset_ms << "\n";
 
     const std::string text = out.str();
     if (WriteAtomic(path_, text))

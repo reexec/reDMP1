@@ -1,0 +1,20 @@
+diff --git a/tools/allegrexrecomp/emit.c b/tools/allegrexrecomp/emit.c
+index 732617f..8a1b2c3 100644
+--- a/tools/allegrexrecomp/emit.c
++++ b/tools/allegrexrecomp/emit.c
+@@ -1226,6 +1226,15 @@ static void emit_header(ectx *c) {
+         "#  define PSP_SP_CALL(t,a,b) ((void)0)\n"
+         "#  define PSP_MARK(a)  ((void)0)\n"
+         "#endif\n"
++        "#ifdef PSPRECOMP_LOOP_HOOK\n"
++        "void psp_loop_hook(uint32_t addr);\n"
++        "#  undef PSP_LOOP\n"
++        "#  ifdef PSPRECOMP_TRACE\n"
++        "#    define PSP_LOOP(a) do { psp_trace_loop(a); psp_loop_hook(a); } while (0)\n"
++        "#  else\n"
++        "#    define PSP_LOOP(a) psp_loop_hook(a)\n"
++        "#  endif\n"
++        "#endif\n"
+         "\n"
+         "/* Register aliases, so the generated code reads like the assembly. */\n");
+ 

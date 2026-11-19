@@ -777,6 +777,8 @@ int RunBoot(const std::filesystem::path& game_dir,
     repsp::hle::audio::Register(audio_cfg);
     repsp::hle::sascore::Register();
     repsp::hle::atrac::Register();
+    repsp::hle::atrac::SetStartOffsetMs(static_cast<int32_t>(settings.music_offset_ms));
+    std::cout << "[redmp1] Music offset: " << settings.music_offset_ms << " ms\n";
     repsp::hle::mpeg::Register();
 
     std::unique_ptr<repsp::codec::LoadedCodecPlugin> codec_plugin;

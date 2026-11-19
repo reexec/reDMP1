@@ -55,6 +55,7 @@ private:
     void DrawInfoTab();
     void DrawGraphicsTab();
     void DrawPostShaderSection(float combo_width);
+    void DrawAudioTab();
     void DrawInputTab();
     void DrawStatsWindow();
 

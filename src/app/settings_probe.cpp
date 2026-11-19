@@ -48,6 +48,7 @@ int main()
         s.show_gpu_memory = true;
         s.stats_x = 0.85f;
         s.stats_y = 0.12f;
+        s.music_offset_ms = 125;
         PROBE_ASSERT(file.Save(s));
 
         const redmp1::Settings loaded = file.Load();
@@ -65,6 +66,7 @@ int main()
         PROBE_ASSERT(loaded.show_gpu_memory == true);
         PROBE_ASSERT(loaded.stats_x > 0.84f && loaded.stats_x < 0.86f);
         PROBE_ASSERT(loaded.stats_y > 0.11f && loaded.stats_y < 0.13f);
+        PROBE_ASSERT(loaded.music_offset_ms == 125);
     }
 
     // 2. Unknown keys and malformed values preserve defaults
@@ -85,7 +87,11 @@ int main()
                 << "OutputFilter=cubic\n"
                 << "TextureFilter=invalid\n"
                 << "StatsX=2.5\n"
-                << "Fullscreen=yes\n";
+                << "Fullscreen=yes\n"
+                << "[Audio]\n"
+                << "MusicOffsetMs=305\n"
+                << "MusicOffsetMs=-305\n"
+                << "MusicOffsetMs=bogus\n";
         }
         redmp1::SettingsFile file(bad_ini, fallback);
         const redmp1::Settings loaded = file.Load();
@@ -98,6 +104,18 @@ int main()
         PROBE_ASSERT(loaded.texture_filter == repsp::gpu::TextureFilterMode::kOriginal);
         PROBE_ASSERT(loaded.stats_x < 0.0f);
         PROBE_ASSERT(loaded.fullscreen == true);
+        PROBE_ASSERT(loaded.music_offset_ms == 0);
+    }
+
+    // 2b. Negative MusicOffsetMs round-trip
+    {
+        const auto neg_ini = base / "neg_offset" / "redmp1.ini";
+        redmp1::SettingsFile file(neg_ini, fallback);
+        redmp1::Settings s;
+        s.music_offset_ms = -85;
+        PROBE_ASSERT(file.Save(s));
+        const redmp1::Settings loaded = file.Load();
+        PROBE_ASSERT(loaded.music_offset_ms == -85);
     }
 
     // 3. Fallback path when primary cannot be written (primary path is an existing directory)
