@@ -12,7 +12,7 @@
 | `0003-jalr-fallthrough.patch` | [sp00nznet/psprecomp#31](https://github.com/sp00nznet/psprecomp/pull/31)(다른 기여자) | 같은 수정이 이미 제출돼 있어 우리는 내지 않았다. 로컬 패치는 #31의 조건(`jalr $zero`는 끝으로 본다)에 맞췄다. |
 | `0004-j-owned-target-goto.patch` | [sp00nznet/psprecomp#35](https://github.com/sp00nznet/psprecomp/pull/35) | 제출함. 로컬 패치는 PR의 커밋과 같다(테스트 파일만 뺐다). |
 | `0005-emit-trampoline.patch` | [sp00nznet/psprecomp#37](https://github.com/sp00nznet/psprecomp/pull/37) | 제출함(2026-11-17). PR은 upstream main 기준이라 `main.c`의 인자 처리(`--base` 없음)만 다르고 `emit`은 같다. PR에는 upstream 런타임(`src/dispatch.c`)의 `psp_run`과 테스트가 함께 있다. 이 저장소의 런타임은 `src/recomp_abi/`에 있다. |
-| `0006-loop-hook.patch` | (미제출) | 준비만 함. upstream 제출은 사용자 허락 후 진행한다. |
+| `0006-loop-hook.patch` | [sp00nznet/psprecomp#38](https://github.com/sp00nznet/psprecomp/pull/38) | 사용자의 허락으로 제출함(2026-11-21). PR은 헤더에 설명 주석 4줄이 더 있을 뿐 같다(생성 코드는 그 주석 말고 같다). PR에는 `test_emit` 검사가 함께 있다. |
 
 예전의 `0002-seed-harvest-segment-bases.patch`는 0001에 합쳤다.
 
@@ -50,7 +50,7 @@ Submitted with the user's permission (2026-11-16). When upstream accepts one, th
 | `0003-jalr-fallthrough.patch` | [sp00nznet/psprecomp#31](https://github.com/sp00nznet/psprecomp/pull/31) (another contributor) | The same fix was already proposed, so we did not submit ours; the local patch follows #31's condition (`jalr $zero` ends a body). |
 | `0004-j-owned-target-goto.patch` | [sp00nznet/psprecomp#35](https://github.com/sp00nznet/psprecomp/pull/35) | Submitted; the local patch equals the PR's commit (minus the test file). |
 | `0005-emit-trampoline.patch` | [sp00nznet/psprecomp#37](https://github.com/sp00nznet/psprecomp/pull/37) | Submitted (2026-11-17). The PR is based on upstream main, so only `main.c`'s argument handling (no `--base`) differs; `emit` is the same. The PR also carries `psp_run` in upstream's runtime (`src/dispatch.c`) and tests; this repository's runtime is in `src/recomp_abi/`. |
-| `0006-loop-hook.patch` | (not submitted) | Prepared only. Upstream submission waits for the user's permission. |
+| `0006-loop-hook.patch` | [sp00nznet/psprecomp#38](https://github.com/sp00nznet/psprecomp/pull/38) | Submitted with the user's permission (2026-11-21). The PR only adds a four-line comment to the header; the generated code is otherwise the same. The PR also carries a `test_emit` check. |
 
 The former `0002-seed-harvest-segment-bases.patch` is folded into 0001.
 
