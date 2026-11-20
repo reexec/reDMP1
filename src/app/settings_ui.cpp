@@ -565,7 +565,7 @@ void SettingsUi::DrawGraphicsTab()
 
     // Texture Filtering
     static constexpr const char* kTexLabels[] = {
-        "Original", "Linear", "Anisotropic 2x", "Anisotropic 4x", "Anisotropic 8x", "Anisotropic 16x"
+        "Original (as the game sets it)", "Linear", "Anisotropic 2x", "Anisotropic 4x", "Anisotropic 8x", "Anisotropic 16x"
     };
     const int tex_idx = std::clamp(static_cast<int>(settings_.texture_filter), 0, 5);
     ImGui::SetNextItemWidth(combo_width);
