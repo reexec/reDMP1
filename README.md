@@ -108,7 +108,8 @@ python scripts/recomp/regenerate.py roms
 ### 단축키, 내부 설정 메뉴, `redmp1.ini`
 
 * **단축키**
-  * `Tab` 또는 게임패드 `LB+RB+Y`: 내부 설정 메뉴(OpenGL 렌더러 전용) 열기/닫기. 메뉴가 열린 동안 게임 입력은 차단됩니다.
+  * `Tab` 또는 게임패드 `LT+RT+Y`: 내부 설정 메뉴(OpenGL 렌더러 전용) 열기/닫기. 메뉴가 열린 동안 게임 입력은 차단됩니다.
+  * 게임패드 `LT+RT+L3+R3` (1초 누르기): 게임 종료 (OpenGL·소프트웨어 렌더러 모두 지원)
   * `Alt+1..6`: 창 크기를 `480x272`의 1~6배로 조절 (전체화면·최대화 해제 후 적용)
   * `Alt+Enter` 또는 창 더블클릭(메뉴 창 밖): 데스크톱 해상도 테두리 없는 전체화면 토글
   * `Ctrl+1..8`: OpenGL 내부 렌더링 해상도(1x~8x) 변경
@@ -180,7 +181,8 @@ ctest --test-dir build/linux-x64-debug --output-on-failure
 ### Shortcuts, In-Game Menu, and `redmp1.ini`
 
 * **Shortcuts**
-  * `Tab` or gamepad `LB+RB+Y`: Toggle the Dear ImGui settings menu (OpenGL renderer only). Game input is withheld while open.
+  * `Tab` or gamepad `LT+RT+Y`: Toggle the Dear ImGui settings menu (OpenGL renderer only). Game input is withheld while open.
+  * Gamepad `LT+RT+L3+R3` (hold 1 s): Quit the app (works on both OpenGL and software renderers).
   * `Alt+1..6`: Resize the window to 1x..6x of `480x272` (leaves fullscreen/maximized first).
   * `Alt+Enter` or double-click outside menu windows: Toggle borderless desktop-resolution fullscreen.
   * `Ctrl+1..8`: Set the OpenGL internal rendering scale (1x..8x).
