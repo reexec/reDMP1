@@ -51,13 +51,20 @@ void Row(const char* label, const std::string& value)
     ImGui::TextWrapped("%s", value.empty() ? "-" : value.c_str());
 }
 
-bool BeginInfoTable(const char* id)
+// A two-column table whose label column fits `widest_label` (the longest
+// label it will hold), and at least 140 (scaled) so short tables line up.
+bool BeginInfoTable(const char* id, const char* widest_label = nullptr)
 {
     if (!ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchProp))
     {
         return false;
     }
-    ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed, 140.0f * ImGui::GetStyle().FontScaleMain);
+    float label_width = 140.0f * ImGui::GetStyle().FontScaleMain;
+    if (widest_label != nullptr)
+    {
+        label_width = std::max(label_width, ImGui::CalcTextSize(widest_label).x + ImGui::GetStyle().CellPadding.x * 2.0f);
+    }
+    ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed, label_width);
     ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch);
     return true;
 }
@@ -136,8 +143,8 @@ uint64_t EffectiveGpuBytes(const repsp::gpu::GpuMemoryInfo& gpu)
 
 } // namespace
 
-SettingsUi::SettingsUi(BuildInfo build, Settings settings, SettingsFile* file)
-    : build_(std::move(build)), settings_(settings), file_(file)
+SettingsUi::SettingsUi(BuildInfo build, Settings settings, SettingsFile* file, app::Autoplay* autoplay)
+    : build_(std::move(build)), settings_(settings), file_(file), autoplay_(autoplay)
 {
 }
 
@@ -224,7 +231,6 @@ void SettingsUi::Build()
     const bool menu = repsp::platform::OverlayVisible();
     if (menu && !menu_was_open_)
     {
-        tab_height_ = 0.0f;
         menu_frames_ = 0;
     }
     menu_was_open_ = menu;
@@ -234,6 +240,7 @@ void SettingsUi::Build()
         ++menu_frames_;
     }
     DrawStatsWindow();
+    DrawAutoplayBadge();
 }
 
 void SettingsUi::DrawMenu()
@@ -243,7 +250,7 @@ void SettingsUi::DrawMenu()
                                    viewport->WorkPos.y + viewport->WorkSize.y * 0.5f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     // The menu is 560 (scaled) wide, or narrower when the window is (a 1x
-    // window is 480 wide); its height fits the tallest tab, up to the
+    // window is 480 wide); its height fits the open tab's content, up to the
     // window's height, beyond which it scrolls.
     const float scale = ImGui::GetStyle().FontScaleMain;
     const float margin = 8.0f * scale;
@@ -290,26 +297,13 @@ void SettingsUi::DrawMenu()
     }
 }
 
-// Every tab is as tall as the tallest seen since the menu opened, so the
-// menu keeps one size whichever tab is open (as in reCT3). Heights are kept
-// divided by the OSD scale, so they still fit after the window changes size.
-// A window's first frames are laid out before it has its width (wrapped text
-// then runs very tall), so they are not measured, nor is any frame narrower
-// than the menu's width.
+// Draws one tab's content; the menu window fits it (see DrawMenu).
 void SettingsUi::DrawTab(void (SettingsUi::*draw)())
 {
-    const float scale = ImGui::GetStyle().FontScaleMain;
-    const float top = ImGui::GetCursorPosY();
+    // Each tab sizes the menu to its own content; a tab taller than the window
+    // scrolls. (Padding every tab to the tallest one left short tabs, such as
+    // Input, mostly empty once Graphics grew.)
     (this->*draw)();
-    const float height = ImGui::GetCursorPosY() - top;
-    if (menu_frames_ >= 2 && ImGui::GetWindowWidth() >= menu_width_ - 1.0f)
-    {
-        tab_height_ = std::max(tab_height_, height / scale);
-    }
-    if (height < tab_height_ * scale)
-    {
-        ImGui::Dummy(ImVec2(0.0f, tab_height_ * scale - height));
-    }
 }
 
 void SettingsUi::DrawInfoTab()
@@ -728,8 +722,19 @@ void SettingsUi::DrawAudioTab()
 
 void SettingsUi::DrawInputTab()
 {
+    if (autoplay_ != nullptr)
+    {
+        ImGui::SeparatorText("Autoplay");
+        bool enabled = autoplay_->IsEnabled();
+        if (ImGui::Checkbox("Autoplay", &enabled))
+        {
+            autoplay_->SetEnabled(enabled);
+        }
+        ImGui::TextDisabled("Plays notes automatically. High scores are saved as usual.");
+    }
+
     ImGui::SeparatorText("Menu & Window Shortcuts");
-    if (BeginInfoTable("shortcut_table"))
+    if (BeginInfoTable("shortcut_table", "Alt+Enter / Double Click"))
     {
         Row("Tab / LT+RT+Y", "Open / close settings menu");
         Row("LT+RT+L3+R3 (hold 1 s)", "Quit");
@@ -885,6 +890,30 @@ void SettingsUi::DrawStatsWindow()
                                              {axis_max, top_lbl, IM_COL32(200, 200, 200, 160), 1.0f}};
             DrawGraph(vals, axis_max, ticks, IM_COL32(255, 190, 100, 255), label_width);
         }
+    }
+    ImGui::End();
+}
+
+void SettingsUi::DrawAutoplayBadge()
+{
+    if (autoplay_ == nullptr || !autoplay_->IsEnabled() || !autoplay_->IsInGameplay())
+    {
+        return;
+    }
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float scale = ImGui::GetStyle().FontScaleMain;
+    const float pad = 8.0f * scale;
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - pad,
+                                   viewport->WorkPos.y + pad),
+                            ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.55f);
+    constexpr ImGuiWindowFlags kFlags =
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+        ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoSavedSettings;
+    if (ImGui::Begin("##autoplay_badge", nullptr, kFlags))
+    {
+        ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.35f, 1.0f), "AUTOPLAY");
     }
     ImGui::End();
 }
