@@ -1,4 +1,4 @@
-/* Derived from psprecomp commit 5ca18fa (src/dispatch.c) under MIT license. */
+/* Derived from psprecomp commit 14749c1 (v0.6.0, src/dispatch.c) under MIT license. */
 
 #include "recomp_abi.h"
 
@@ -143,6 +143,34 @@ void psp_dispatch_tail(uint32_t addr) {
         return;
     }
     default_miss(addr);
+}
+
+#if defined(_MSC_VER)
+#define PSP_NOINLINE __declspec(noinline)
+#elif defined(__GNUC__) || defined(__clang__)
+#define PSP_NOINLINE __attribute__((noinline))
+#else
+#define PSP_NOINLINE
+#endif
+
+PSP_NOINLINE void psp_call_guest_fn(psp_fn_t fn, uint32_t return_site) {
+    psp_frame f = { return_site, psp_cpu.frame };
+    psp_cpu.frame = &f;
+    psp_run(fn);
+    psp_cpu.frame = f.prev;
+    if (psp_cpu.unwind == return_site) {
+        psp_cpu.unwind = 0;
+    }
+}
+
+PSP_NOINLINE void psp_call_guest_addr(uint32_t addr, uint32_t return_site) {
+    psp_frame f = { return_site, psp_cpu.frame };
+    psp_cpu.frame = &f;
+    psp_dispatch(addr);
+    psp_cpu.frame = f.prev;
+    if (psp_cpu.unwind == return_site) {
+        psp_cpu.unwind = 0;
+    }
 }
 
 void psp_call_from_host(uint32_t addr) {
