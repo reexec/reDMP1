@@ -258,6 +258,105 @@ int main(void)
         recomp_abi_reset();
     }
 
+    // 9. psp_call_guest_fn / psp_call_guest_addr: tail chain, frame restore, unwind handling, dispatch miss
+    {
+        static int g_chain_steps = 0;
+        static uint32_t g_seen_frame_ret = 0;
+        static uint32_t g_inner_unwind_after = 0;
+
+        struct GuestCallTest {
+            static void ChainTail() {
+                g_chain_steps++;
+            }
+            static void ChainHead() {
+                g_chain_steps++;
+                g_seen_frame_ret = psp_cpu.frame ? psp_cpu.frame->ret : 0u;
+                psp_next = ChainTail;
+            }
+            static void UnwindToOwn() {
+                CHECK(psp_ra_is_jump(0x08805100u) == 0);
+                // Direct return to own frame does not set unwind; force unwind to an outer frame
+                // when called from InnerUnwindFn/InnerUnwindAddr.
+                psp_cpu.unwind = 0x08805100u;
+            }
+            static void UnwindToOuterLeaf() {
+                CHECK(psp_ra_is_jump(0x08805200u) == 0);
+                CHECK(psp_cpu.unwind == 0x08805200u);
+            }
+            static void InnerViaFn() {
+                psp_call_guest_fn(UnwindToOuterLeaf, 0x08805300u);
+                g_inner_unwind_after = psp_cpu.unwind;
+            }
+            static void InnerViaAddr() {
+                psp_call_guest_addr(0x08805400u, 0x08805304u);
+                g_inner_unwind_after = psp_cpu.unwind;
+            }
+        };
+
+        recomp_abi_reset();
+        psp_register(0x08805000u, GuestCallTest::ChainHead);
+        psp_register(0x08805100u, GuestCallTest::UnwindToOwn);
+        psp_register(0x08805400u, GuestCallTest::UnwindToOuterLeaf);
+
+        // 9a. psp_call_guest_fn runs callee's tail chain and restores psp_cpu.frame
+        psp_frame sentinel = { 0x08804FF0u, nullptr };
+        psp_cpu.frame = &sentinel;
+        g_chain_steps = 0;
+        g_seen_frame_ret = 0;
+        psp_call_guest_fn(GuestCallTest::ChainHead, 0x08805010u);
+        CHECK(g_chain_steps == 2);
+        CHECK(g_seen_frame_ret == 0x08805010u);
+        CHECK(psp_cpu.frame == &sentinel);
+        CHECK(psp_cpu.unwind == 0);
+        CHECK(psp_next == nullptr);
+
+        // 9b. psp_call_guest_fn clears unwind targeting its own return_site
+        psp_call_guest_fn(GuestCallTest::UnwindToOwn, 0x08805100u);
+        CHECK(psp_cpu.frame == &sentinel);
+        CHECK(psp_cpu.unwind == 0);
+
+        // 9c. psp_call_guest_fn preserves unwind targeting an outer return_site
+        g_inner_unwind_after = 0;
+        psp_call_guest_fn(GuestCallTest::InnerViaFn, 0x08805200u);
+        CHECK(g_inner_unwind_after == 0x08805200u);
+        CHECK(psp_cpu.frame == &sentinel);
+        CHECK(psp_cpu.unwind == 0);
+
+        // 9d. psp_call_guest_addr runs tail chain, restores frame, and handles own/outer unwind
+        g_chain_steps = 0;
+        g_seen_frame_ret = 0;
+        psp_call_guest_addr(0x08805000u, 0x08805020u);
+        CHECK(g_chain_steps == 2);
+        CHECK(g_seen_frame_ret == 0x08805020u);
+        CHECK(psp_cpu.frame == &sentinel);
+        CHECK(psp_cpu.unwind == 0);
+
+        psp_call_guest_addr(0x08805100u, 0x08805100u);
+        CHECK(psp_cpu.frame == &sentinel);
+        CHECK(psp_cpu.unwind == 0);
+
+        g_inner_unwind_after = 0;
+        psp_register(0x08805500u, GuestCallTest::InnerViaAddr);
+        psp_call_guest_addr(0x08805500u, 0x08805200u);
+        CHECK(g_inner_unwind_after == 0x08805200u);
+        CHECK(psp_cpu.frame == &sentinel);
+        CHECK(psp_cpu.unwind == 0);
+
+        // 9e. psp_call_guest_addr reports unregistered address as a dispatch miss
+        const uint64_t guestMissesBefore = recomp_abi_dispatch_misses();
+        auto guestMissRes = repsp::platform::GuardedRun([]() {
+            psp_call_guest_addr(0x088099A0u, 0x08805600u);
+        });
+        CHECK(!guestMissRes.succeeded);
+        CHECK(guestMissRes.stopped);
+        CHECK(guestMissRes.stop_reason.find("088099A0") != std::string::npos);
+        CHECK(recomp_abi_dispatch_misses() == guestMissesBefore + 1);
+        CHECK(recomp_abi_last_miss() == 0x088099A0u);
+
+        psp_cpu.frame = nullptr;
+        recomp_abi_reset();
+    }
+
     std::printf("[recomp_abi_probe] All checks passed successfully!\n");
     return 0;
 }
