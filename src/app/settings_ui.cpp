@@ -136,8 +136,8 @@ uint64_t EffectiveGpuBytes(const repsp::gpu::GpuMemoryInfo& gpu)
 
 } // namespace
 
-SettingsUi::SettingsUi(BuildInfo build, Settings settings, SettingsFile* file)
-    : build_(std::move(build)), settings_(settings), file_(file)
+SettingsUi::SettingsUi(BuildInfo build, Settings settings, SettingsFile* file, app::Autoplay* autoplay)
+    : build_(std::move(build)), settings_(settings), file_(file), autoplay_(autoplay)
 {
 }
 
@@ -234,6 +234,7 @@ void SettingsUi::Build()
         ++menu_frames_;
     }
     DrawStatsWindow();
+    DrawAutoplayBadge();
 }
 
 void SettingsUi::DrawMenu()
@@ -728,6 +729,17 @@ void SettingsUi::DrawAudioTab()
 
 void SettingsUi::DrawInputTab()
 {
+    if (autoplay_ != nullptr)
+    {
+        ImGui::SeparatorText("Autoplay");
+        bool enabled = autoplay_->IsEnabled();
+        if (ImGui::Checkbox("Autoplay", &enabled))
+        {
+            autoplay_->SetEnabled(enabled);
+        }
+        ImGui::TextDisabled("Plays notes automatically. High scores are saved as usual.");
+    }
+
     ImGui::SeparatorText("Menu & Window Shortcuts");
     if (BeginInfoTable("shortcut_table"))
     {
@@ -885,6 +897,30 @@ void SettingsUi::DrawStatsWindow()
                                              {axis_max, top_lbl, IM_COL32(200, 200, 200, 160), 1.0f}};
             DrawGraph(vals, axis_max, ticks, IM_COL32(255, 190, 100, 255), label_width);
         }
+    }
+    ImGui::End();
+}
+
+void SettingsUi::DrawAutoplayBadge()
+{
+    if (autoplay_ == nullptr || !autoplay_->IsEnabled() || !autoplay_->IsInGameplay())
+    {
+        return;
+    }
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float scale = ImGui::GetStyle().FontScaleMain;
+    const float pad = 8.0f * scale;
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - pad,
+                                   viewport->WorkPos.y + pad),
+                            ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.55f);
+    constexpr ImGuiWindowFlags kFlags =
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+        ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoSavedSettings;
+    if (ImGui::Begin("##autoplay_badge", nullptr, kFlags))
+    {
+        ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.35f, 1.0f), "AUTOPLAY");
     }
     ImGui::End();
 }

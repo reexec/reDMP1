@@ -3,6 +3,7 @@
 #ifndef REDMP1_APP_SETTINGS_UI_H
 #define REDMP1_APP_SETTINGS_UI_H
 
+#include "autoplay.h"
 #include "settings.h"
 
 #include <chrono>
@@ -26,7 +27,7 @@ struct BuildInfo
 class SettingsUi
 {
 public:
-    SettingsUi(BuildInfo build, Settings settings, SettingsFile* file);
+    SettingsUi(BuildInfo build, Settings settings, SettingsFile* file, app::Autoplay* autoplay = nullptr);
 
     // Overlay builder callback: runs on every present pass on the UI thread.
     void Build();
@@ -58,10 +59,12 @@ private:
     void DrawAudioTab();
     void DrawInputTab();
     void DrawStatsWindow();
+    void DrawAutoplayBadge();
 
     BuildInfo build_;
     Settings settings_;
     SettingsFile* file_ = nullptr;
+    app::Autoplay* autoplay_ = nullptr;
     bool observed_ = false;
     Tracked<int> render_scale_;
     Tracked<bool> fullscreen_;
