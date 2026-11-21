@@ -1,8 +1,42 @@
+From d9278d233ae4e37fc865c6405ee9651e33f01c69 Mon Sep 17 00:00:00 2001
+From: Kitae Noh <5194831+nworkers@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 00:15:49 +0900
+Subject: [PATCH] emit --trampoline: body-ending transfers without host stack
+
+Transfers that end a body (a fall-out into the next function, a `j` to
+another function, the taken path of a likely branch, an indirect `jr`, a
+`jr $ra` used as a jump) are emitted as C tail calls. Whether those become
+jumps is up to the C compiler: unoptimized builds, and some optimized
+ones, keep a host frame per transfer, so a guest loop that runs through
+several functions grows the host stack without bound.
+
+With --trampoline (off by default; off, the output is unchanged), such a
+transfer stores its target in the per-thread psp_next and returns
+(PSP_TAIL), and psp_run() calls a function and then the chain it leaves.
+Guest calls keep going through psp_call_guest_fn/psp_call_guest_addr,
+which now run the callee through psp_run, so the host stack grows only
+with guest calls. psp_dispatch runs its target through psp_run,
+psp_dispatch_tail is the tail form, a guest unwind (psp_cpu.unwind) ends
+a chain, and psp_call_from_host drops anything a stopped run left behind.
+--trampoline combines with --base and --hints on the emit command line.
+
+Tests: the emitter fixtures for fall-outs, `j`, likely branches, `jr` and
+`bal` with the option on; a 100,000-round cycle through three functions,
+one of them indirect, runs one frame deep, both from psp_run and through
+psp_call_guest_fn; unwinding and host entry.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ tools/allegrexrecomp/emit.c | 83 ++++++++++++++++++++++++++++---------
+ tools/allegrexrecomp/emit.h |  4 ++
+ tools/allegrexrecomp/main.c | 14 ++++---
+ 3 files changed, 77 insertions(+), 24 deletions(-)
+
 diff --git a/tools/allegrexrecomp/emit.c b/tools/allegrexrecomp/emit.c
-index f282043..732617f 100644
+index 332b9bc..8b1bd13 100644
 --- a/tools/allegrexrecomp/emit.c
 +++ b/tools/allegrexrecomp/emit.c
-@@ -26,6 +26,7 @@ typedef struct {
+@@ -27,6 +27,7 @@ typedef struct {
      uint8_t *is_slot;      /* per word: consumed as a delay slot */
      uint32_t *entries;     /* interior labels that got a dispatch thunk */
      int nentries, centries;
@@ -10,23 +44,7 @@ index f282043..732617f 100644
  } ectx;
  
  static void entry_push(ectx *c, uint32_t a) {
-@@ -104,8 +105,13 @@ static void emit_static_call(ectx *c, uint32_t target) {
-          * at the call site catches it wherever the imbalance actually occurs --
-          * including across split bodies, where no single body owns both halves
-          * of a frame and a per-body check is blind. */
--        fprintf(c->out, "    { uint32_t _spc = r_sp; psp_func_%08X();"
--                        " PSP_SP_CALL(0x%08Xu, _spc, r_sp); }\n", target, target);
-+        if (c->trampoline) {
-+            fprintf(c->out, "    { uint32_t _spc = r_sp; psp_run(psp_func_%08X);"
-+                            " PSP_SP_CALL(0x%08Xu, _spc, r_sp); }\n", target, target);
-+        } else {
-+            fprintf(c->out, "    { uint32_t _spc = r_sp; psp_func_%08X();"
-+                            " PSP_SP_CALL(0x%08Xu, _spc, r_sp); }\n", target, target);
-+        }
-     } else {
-         /* Discovery did not reach it. Going through the dispatch table means
-          * the failure is named at run time instead of failing to link. */
-@@ -143,9 +149,11 @@ static void emit_static_call_tail(ectx *c, uint32_t target) {
+@@ -144,9 +145,11 @@ static void emit_static_call_tail(ectx *c, uint32_t target) {
      if (is_import(c->an, target)) {
          fprintf(c->out, "    psp_import_%08X();\n", target);
      } else if (is_function(c->an, target)) {
@@ -40,21 +58,7 @@ index f282043..732617f 100644
      }
  }
  
-@@ -855,9 +863,11 @@ static void emit_function(ectx *c, const a_func *fn) {
-             if (is_import(an, in.target))
-                 fprintf(f, "          psp_import_%08X();\n", in.target);
-             else if (is_function(an, in.target))
--                fprintf(f, "          psp_func_%08X();\n", in.target);
-+                fprintf(f, c->trampoline ? "          psp_run(psp_func_%08X);\n"
-+                                         : "          psp_func_%08X();\n", in.target);
-             else if (owned_by(an, in.target, owner))
--                fprintf(f, "          psp_at_%08X();\n", in.target);
-+                fprintf(f, c->trampoline ? "          psp_run(psp_at_%08X);\n"
-+                                         : "          psp_at_%08X();\n", in.target);
-             else
-                 fprintf(f, "          psp_dispatch(0x%08Xu);\n", in.target);
-             fprintf(f, "        PSP_CALL_END(0x%08Xu);\n", a + 8);
-@@ -868,7 +878,8 @@ static void emit_function(ectx *c, const a_func *fn) {
+@@ -883,7 +886,8 @@ static void emit_function(ectx *c, const a_func *fn) {
                  if (owned_by(an, a + 8, owner) && c->is_label[widx(an, a + 8)])
                      fprintf(f, "        goto L_%08X;\n", a + 8);
                  else
@@ -64,7 +68,7 @@ index f282043..732617f 100644
              }
              fprintf(f, "      } }\n");
              if (have_slot && c->is_label[widx(an, a + 4)]) emit_slot_alias(c, a, &slot, 1);
-@@ -924,16 +935,30 @@ static void emit_function(ectx *c, const a_func *fn) {
+@@ -939,16 +943,30 @@ static void emit_function(ectx *c, const a_func *fn) {
                      comment(c, &slot);
                      emit_simple(c, &slot, "        ");
                      fprintf(f, "        ");
@@ -103,7 +107,7 @@ index f282043..732617f 100644
                  }
              }
              if (have_slot && c->is_label[widx(an, a + 4)]) emit_slot_alias(c, a, &slot, 1);
-@@ -1022,7 +1047,8 @@ static void emit_function(ectx *c, const a_func *fn) {
+@@ -1037,7 +1055,8 @@ static void emit_function(ectx *c, const a_func *fn) {
               * jr reads $ra before its delay slot, as for jr $rN below. */
              fprintf(f, "    { uint32_t _t = r_ra;\n");
              if (have_slot || taken_slot) { comment(c, &slot); emit_simple(c, &slot, "    "); }
@@ -113,7 +117,7 @@ index f282043..732617f 100644
              /* Only a genuine `jr $ra` is expected to leave $sp as it found it.
               * Tail jumps and cross-function transfers are emitted as `return`
               * too, but their epilogue runs in the target, so $sp is correctly
-@@ -1039,7 +1065,8 @@ static void emit_function(ectx *c, const a_func *fn) {
+@@ -1054,7 +1073,8 @@ static void emit_function(ectx *c, const a_func *fn) {
              /* The target is read before the delay slot, as for jalr above. */
              fprintf(f, "    { uint32_t _t = %s;\n", RN[in.rs]);
              if (have_slot || taken_slot) { comment(c, &slot); emit_simple(c, &slot, "    "); }
@@ -123,7 +127,7 @@ index f282043..732617f 100644
              if (have_slot && c->is_label[widx(an, a + 4)]) emit_slot_alias(c, a, &slot, 0);
              a += 4;
              continue;
-@@ -1052,7 +1079,8 @@ static void emit_function(ectx *c, const a_func *fn) {
+@@ -1067,7 +1087,8 @@ static void emit_function(ectx *c, const a_func *fn) {
                  fprintf(f, "    goto L_%08X;\n", in.target);
              } else {
                  emit_static_call_tail(c, in.target);  /* tail call, and it must stay one */
@@ -133,7 +137,7 @@ index f282043..732617f 100644
              }
              if (have_slot && c->is_label[widx(an, a + 4)]) emit_slot_alias(c, a, &slot, 0);
              a += 4;
-@@ -1094,12 +1122,14 @@ static void emit_function(ectx *c, const a_func *fn) {
+@@ -1109,12 +1130,14 @@ static void emit_function(ectx *c, const a_func *fn) {
          uint32_t next = fn->end;
          if (is_function(an, next)) {
              fprintf(f, "    /* falls through into the next function */\n");
@@ -150,10 +154,10 @@ index f282043..732617f 100644
          }
          /* The remaining case -- an address no body holds, usually a `.word`
           * tail -- keeps the silent return for now. Dispatching there instead
-@@ -1154,7 +1184,28 @@ static void emit_header(FILE *f, const ectx *c, const emit_opts *o) {
-         " psp_cpu.frame = &_f;\n"
-         "#define PSP_CALL_END(r) psp_cpu.frame = _f.prev; if (psp_cpu.unwind) {"
-         " if (psp_cpu.unwind == (r)) psp_cpu.unwind = 0; else return; } }\n"
+@@ -1169,7 +1192,28 @@ static void emit_header(FILE *f, const ectx *c, const emit_opts *o) {
+         " * unwind aimed further out; the helper consumes its own return site. */\n"
+         "#define PSP_CALL_BEGIN(r) {\n"
+         "#define PSP_CALL_END(r) if (psp_cpu.unwind) return; }\n"
 -        "\n"
 +        "\n",
 +        o->module ? o->module : "(unknown)", an->nfuncs, an->nimports);
@@ -180,8 +184,8 @@ index f282043..732617f 100644
          "/* Build with -DPSPRECOMP_TRACE to record every function entry. Costs\n"
          " * one store per call when on, and nothing at all when off. A dispatch\n"
          " * miss then reports how the code arrived, not just where it went. */\n"
-@@ -1176,8 +1227,7 @@ static void emit_header(FILE *f, const ectx *c, const emit_opts *o) {
-         "#  define PSP_MARK(a)  ((void)0)\n"
+@@ -1204,8 +1248,7 @@ static void emit_header(FILE *f, const ectx *c, const emit_opts *o) {
+         "#  endif\n"
          "#endif\n"
          "\n"
 -        "/* Register aliases, so the generated code reads like the assembly. */\n",
@@ -190,7 +194,7 @@ index f282043..732617f 100644
  
      for (int i = 0; i < 32; i++)
          fprintf(f, "#define %-7s psp_cpu.r[%d]\n", RN[i], i);
-@@ -1354,6 +1404,7 @@ int a_emit(const a_analysis *an, const emit_opts *o) {
+@@ -1418,6 +1461,7 @@ int a_emit(const a_analysis *an, const emit_opts *o) {
      c.is_slot  = (uint8_t *)calloc(an->nwords ? an->nwords : 1, 1);
      c.entries = NULL;
      c.nentries = c.centries = 0;
@@ -198,7 +202,7 @@ index f282043..732617f 100644
      if (!c.is_label || !c.is_slot) goto fail;
  
  /* Commit the current output file, counting it, and bail out on an I/O error. */
-@@ -1464,6 +1515,7 @@ int a_emit_one(const a_analysis *an, uint32_t addr, FILE *out) {
+@@ -1531,6 +1575,7 @@ int a_emit_one(const a_analysis *an, uint32_t addr, FILE *out) {
      uint32_t want = addr & ~3u;
      ectx c;
      int i;
@@ -207,13 +211,13 @@ index f282043..732617f 100644
      /* An address that turns up in a trace is usually somewhere *inside* a
       * function rather than at its entry -- a clobbered register, a frame that
 diff --git a/tools/allegrexrecomp/emit.h b/tools/allegrexrecomp/emit.h
-index 7be1dbf..88d2173 100644
+index 3276a94..2a90312 100644
 --- a/tools/allegrexrecomp/emit.h
 +++ b/tools/allegrexrecomp/emit.h
-@@ -33,6 +33,10 @@ typedef struct {
-      * comment. Without it the thunks can only trap. */
-     const psp_import_entry *imports;
-     int                     nimports;
+@@ -40,6 +40,10 @@ typedef struct {
+      * routine's computed targets become reachable without the analysis having
+      * to guess them (hints.h). */
+     const a_hints *hints;
 +
 +    /* Emit body-ending transfers as PSP_TAIL(...) and calls through psp_run(...)
 +     * so cross-function tail-call chains stay flat on the host stack. */
@@ -222,51 +226,60 @@ index 7be1dbf..88d2173 100644
  
  /* Emit the whole module: <prefix>_funcs.h, <prefix>_imports.c,
 diff --git a/tools/allegrexrecomp/main.c b/tools/allegrexrecomp/main.c
-index 1e5a67c..f4ba2c1 100644
+index d005c8c..d988e31 100644
 --- a/tools/allegrexrecomp/main.c
 +++ b/tools/allegrexrecomp/main.c
-@@ -33,7 +33,7 @@ static int usage(void) {
+@@ -34,7 +34,7 @@ static int usage(void) {
          "  allegrexrecomp dis     <file> [start-addr] [count]\n"
          "  allegrexrecomp cover   <file>\n"
          "  allegrexrecomp funcs   <file> [--list] [--base <addr>]\n"
--        "  allegrexrecomp emit    <file> <outdir> [prefix] [--base <addr>]\n"
-+        "  allegrexrecomp emit    <file> <outdir> [prefix] [--base <addr>] [--trampoline]\n"
+-        "  allegrexrecomp emit    <file> <outdir> [prefix] [--base <addr>] [--hints <path>]\n"
++        "  allegrexrecomp emit    <file> <outdir> [prefix] [--base <addr>] [--hints <path>] [--trampoline]\n"
          "  allegrexrecomp dump    <file> <addr>\n"
          "  allegrexrecomp relocate <file> <base> <out>\n"
          "  allegrexrecomp decrypt <file> [--keys <path>]\n"
-@@ -749,7 +749,7 @@ static int cmd_funcs(const char *path, int list, uint32_t base) {
- 
+@@ -755,7 +755,7 @@ static int cmd_funcs(const char *path, int list, uint32_t base) {
  /* ---- the emitter --------------------------------------------------------- */
  
--static int cmd_emit(const char *path, const char *outdir, const char *prefix, uint32_t base) {
-+static int cmd_emit(const char *path, const char *outdir, const char *prefix, uint32_t base, int trampoline) {
+ static int cmd_emit(const char *path, const char *outdir, const char *prefix, uint32_t base,
+-                    const char *hintspath) {
++                    const char *hintspath, int trampoline) {
      psp_blob b;
      elf_info e;
      a_analysis an;
-@@ -786,6 +786,7 @@ static int cmd_emit(const char *path, const char *outdir, const char *prefix, ui
-     o.module = module;
+@@ -807,6 +807,7 @@ static int cmd_emit(const char *path, const char *outdir, const char *prefix, ui
      o.imports = imp;
      o.nimports = nimp;
+     o.hints = hintspath ? &hints : NULL;
 +    o.trampoline = trampoline;
  
      printf("module:     %s\n", module);
      printf("functions:  %d\n", an.nfuncs);
-@@ -1099,14 +1100,17 @@ int main(int argc, char **argv) {
-         const char *outdir = argv[3];
+@@ -1120,18 +1121,21 @@ int main(int argc, char **argv) {
+     }
+     if (!strcmp(cmd, "emit")) {
+         if (argc < 4) return usage();
+-        /* [prefix] [--base <addr>] [--hints <path>], in any order: the prefix
+-         * stays optional so every existing command line keeps working. */
++        /* [prefix] [--base <addr>] [--hints <path>] [--trampoline], in any
++         * order: the prefix stays optional so every existing command line
++         * keeps working. */
          const char *prefix = NULL;
+         const char *hintspath = NULL;
          uint32_t base = 0;
 +        int trampoline = 0;
          for (int i = 4; i < argc; i++) {
-             if (!strcmp(argv[i], "--base") && i + 1 < argc) {
-                 base = (uint32_t)strtoul(argv[++i], NULL, 0);
-+            } else if (!strcmp(argv[i], "--trampoline")) {
-+                trampoline = 1;
-             } else if (!prefix && argv[i][0] != '-') {
-                 prefix = argv[i];
-             }
+             if (!strcmp(argv[i], "--hints") && i + 1 < argc) { hintspath = argv[++i]; continue; }
++            if (!strcmp(argv[i], "--trampoline")) { trampoline = 1; continue; }
+             if (!strcmp(argv[i], "--base") && i + 1 < argc) { base = (uint32_t)strtoul(argv[++i], NULL, 0); continue; }
+             if (!prefix && argv[i][0] != '-') { prefix = argv[i]; continue; }
+             return usage();
          }
--        return cmd_emit(argv[2], outdir, prefix, base);
-+        return cmd_emit(argv[2], outdir, prefix, base, trampoline);
+-        return cmd_emit(argv[2], argv[3], prefix, base, hintspath);
++        return cmd_emit(argv[2], argv[3], prefix, base, hintspath, trampoline);
      }
      if (!strcmp(cmd, "dump")) {
          if (argc < 4) return usage();
+-- 
+2.53.0.windows.2
+
