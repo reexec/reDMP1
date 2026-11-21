@@ -256,7 +256,7 @@ void SettingsUi::DrawMenu()
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize))
     {
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        ImGui::TextWrapped("Tab (LB+RB+Y on a gamepad) closes this menu. The game keeps running without input.");
+        ImGui::TextWrapped("Tab (LT+RT+Y on a gamepad) closes this menu. The game keeps running without input.");
         ImGui::PopStyleColor();
         if (ImGui::BeginTabBar("tabs"))
         {
@@ -605,6 +605,13 @@ void SettingsUi::DrawGraphicsTab()
     {
         Save();
     }
+
+    ImGui::Separator();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped(
+        "Shortcuts: Ctrl+1..8 resolution, Alt+Enter or double click fullscreen, "
+        "Alt+1..6 window size. Gamepad: LT+RT+Y menu, LT+RT+L3+R3 held 1 s quits.");
+    ImGui::PopStyleColor();
 }
 
 void SettingsUi::DrawPostShaderSection(float combo_width)
@@ -724,7 +731,8 @@ void SettingsUi::DrawInputTab()
     ImGui::SeparatorText("Menu & Window Shortcuts");
     if (BeginInfoTable("shortcut_table"))
     {
-        Row("Tab / LB+RB+Y", "Open / close settings menu");
+        Row("Tab / LT+RT+Y", "Open / close settings menu");
+        Row("LT+RT+L3+R3 (hold 1 s)", "Quit");
         Row("Alt+1..6", "Resize window to 1x..6x (480x272)");
         Row("Alt+Enter / Double Click", "Toggle borderless fullscreen");
         Row("Ctrl+1..8", "Set GL render scale (1x..8x)");
