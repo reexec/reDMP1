@@ -42,6 +42,9 @@ inline constexpr uint8_t kNoteTypeNormal = 1u;                      // §2.2: no
 inline constexpr uint8_t kNoteTypeHeader = 4u;                      // §2.2: channel header (time 0)
 
 inline constexpr uint32_t kMaxLanes = 8u;
+// Filter calls with the chart time unchanged before autoplay treats the game
+// as paused and hands the buttons over (about 3 frames).
+inline constexpr uint32_t kStalledCallsForPause = 3u;
 } // namespace autoplay_layout
 
 // Input-stage autoplay controller for DJMAX Portable.
@@ -71,6 +74,10 @@ private:
     uint32_t last_chart_addr_ = 0;
     uint32_t last_now_ = 0;
     bool has_last_now_ = false;
+    // Consecutive filter calls that saw the chart time unchanged. The chart
+    // clock stops while the game is paused (and before the song starts); the
+    // pause menu is driven by the same lane buttons, so autoplay steps aside.
+    uint32_t stalled_calls_ = 0;
     bool logged_unsupported_type_ = false;
 
     std::array<uint32_t, autoplay_layout::kMaxLanes> lane_cursor_{};

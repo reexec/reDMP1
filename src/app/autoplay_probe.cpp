@@ -272,6 +272,41 @@ int main()
         PROBE_ASSERT(ap.FilterButtons(0u, mem) == 0u);
     }
 
+    // Pause: the chart time stands still, so autoplay hands the buttons over
+    // (the pause menu uses lane buttons), then resumes and presses the note.
+    {
+        SynthChartFixture fx;
+        fx.WriteScene(mem, kGameplaySceneVtable, 4u, 0u, 0u);
+        fx.SetLaneNotes(mem, 0u, 2u, {{200u, kNoteTypeNormal, 2u}});
+        // Lanes 1-3 get empty channels, so nothing left by earlier checks is pressed.
+        fx.SetLaneNotes(mem, 1u, 20u, {});
+        fx.SetLaneNotes(mem, 2u, 21u, {});
+        fx.SetLaneNotes(mem, 3u, 22u, {});
+        ap.ResetState();
+        ap.SetEnabled(true);
+
+        const uint32_t human = kPspCtrlUp | kPspCtrlCircle | kPspCtrlStart;
+        fx.SetNow(mem, 100u);
+        PROBE_ASSERT((ap.FilterButtons(human, mem) & (kPspCtrlUp | kPspCtrlCircle)) == 0u); // running: lane buttons cleared
+        uint32_t out = 0;
+        for (uint32_t i = 0; i < kStalledCallsForPause; ++i)
+        {
+            out = ap.FilterButtons(human, mem); // now stays at 100
+        }
+        PROBE_ASSERT(out == human); // paused: passed through unchanged
+        PROBE_ASSERT(ap.FilterButtons(human, mem) == human);
+
+        bool pressed = false;
+        for (uint32_t t = 116u; t <= 260u; t += 16u)
+        {
+            fx.SetNow(mem, t);
+            out = ap.FilterButtons(human, mem);
+            PROBE_ASSERT((out & (kPspCtrlUp | kPspCtrlCircle)) == 0u); // running again: cleared
+            pressed = pressed || ((out & kPspCtrlLeft) != 0u);
+        }
+        PROBE_ASSERT(pressed); // the note at t=200 is still pressed after the pause
+    }
+
     mem.Shutdown();
     std::printf("[PASS] redmp1_autoplay_probe: all checks passed\n");
     return 0;

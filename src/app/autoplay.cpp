@@ -64,6 +64,7 @@ void Autoplay::ResetState()
     last_chart_addr_ = 0;
     last_now_ = 0;
     has_last_now_ = false;
+    stalled_calls_ = 0;
     logged_unsupported_type_ = false;
     lane_cursor_.fill(0u);
     lane_pressed_prev_.fill(false);
@@ -160,6 +161,28 @@ uint32_t Autoplay::FilterButtons(uint32_t buttons, const repsp::runtime::GuestMe
         (has_last_now_ && now < last_now_))
     {
         ResetState();
+    }
+
+    // Paused (or not started): the chart time stands still. Hand the buttons
+    // over unchanged so the pause menu works, and drop any hold in progress.
+    if (has_last_now_ && now == last_now_)
+    {
+        if (stalled_calls_ < kStalledCallsForPause)
+        {
+            ++stalled_calls_;
+        }
+    }
+    else
+    {
+        stalled_calls_ = 0;
+    }
+    if (stalled_calls_ >= kStalledCallsForPause)
+    {
+        lane_pressed_prev_.fill(false);
+        lane_holding_.fill(false);
+        last_score_addr_ = score_addr;
+        last_chart_addr_ = chart_addr;
+        return buttons;
     }
 
     uint32_t delta = has_last_now_ ? (now - last_now_) : 0u;
