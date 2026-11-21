@@ -144,6 +144,7 @@ endif()
 
 add_executable(redmp1
     src/app/main.cpp
+    src/app/autoplay.cpp
     src/app/settings.cpp
     src/app/settings_ui.cpp
 )
@@ -232,6 +233,18 @@ target_link_libraries(redmp1_settings_probe PRIVATE
 )
 repsp_apply_host_flags(redmp1_settings_probe)
 add_test(NAME redmp1_settings_probe COMMAND $<TARGET_FILE:redmp1_settings_probe>)
+
+# redmp1_autoplay_probe (synthetic guest memory autoplay filter verification)
+add_executable(redmp1_autoplay_probe
+    src/app/autoplay_probe.cpp
+    src/app/autoplay.cpp
+)
+target_link_libraries(redmp1_autoplay_probe PRIVATE
+    repsp::runtime
+    repsp::platform
+)
+repsp_apply_host_flags(redmp1_autoplay_probe)
+add_test(NAME redmp1_autoplay_probe COMMAND $<TARGET_FILE:redmp1_autoplay_probe>)
 
 # 5. CTest and Smoke Tests
 enable_testing()
